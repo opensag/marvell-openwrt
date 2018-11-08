@@ -14,4 +14,17 @@ define Device/globalscale-espressobin
 endef
 TARGET_DEVICES += globalscale-espressobin
 
+define Device/xspeed-nmxx
+  KERNEL_NAME := Image
+  KERNEL := kernel-bin
+  DEVICE_TITLE := NMXX (X-Speed Armada 3700 NMXX Board)
+  DEVICE_PACKAGES := e2fsprogs ethtool mkf2fs kmod-fs-vfat kmod-usb2 kmod-usb3 kmod-usb-storage
+  IMAGES := sysupgrade-rootfs.tar.gz
+  IMAGE/sysupgrade-rootfs.tar.gz := sysupgrade-rootfs
+  DEVICE_DTS := armada-3720-nmxx
+  DTS_DIR := $(DTS_DIR)/marvell
+  SUPPORTED_DEVICES := x-speed,nmxx
+endef
+TARGET_DEVICES += xspeed-nmxx
+
 endif

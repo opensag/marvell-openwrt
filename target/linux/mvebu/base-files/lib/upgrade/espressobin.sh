@@ -18,7 +18,7 @@ platform_do_upgrade_espressobin() {
     local tar_file="$1"
     local board=globalscale,espressobin
     local kernel=sda1
-    local rootfs=sda1
+    local rootfs=mmcblk1p1
 
     platform_do_flash $tar_file $board $kernel $rootfs
 }

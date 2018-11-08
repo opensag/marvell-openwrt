@@ -46,7 +46,7 @@ define Build/boot-img-ext4
 	$(foreach dts,$(DEVICE_DTS), $(CP) $(DTS_DIR)/$(dts).dtb $@.boot;)
 	$(CP) $(IMAGE_KERNEL) $@.boot/$(KERNEL_NAME)
 	-$(CP) $@-boot.scr $@.boot/boot.scr
-	make_ext4fs -J -l 16384K $@.bootimg $@.boot
+	make_ext4fs -J -l 32768K $@.bootimg $@.boot
 endef
 
 define Build/sdcard-img
