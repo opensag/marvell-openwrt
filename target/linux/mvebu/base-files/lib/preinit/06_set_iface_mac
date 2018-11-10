@@ -42,9 +42,11 @@ preinit_set_mac_address() {
 		;;
 	globalscale,espressobin)
 		mac=$(cat /sys/class/net/eth0/address)
-		ifconfig wan hw ether $(macaddr_add "$mac" 1) 2>/dev/null
-		ifconfig lan0 hw ether $(macaddr_add "$mac" 2) 2>/dev/null
-		ifconfig lan1 hw ether $(macaddr_add "$mac" 3) 2>/dev/null
+		ifconfig lan0 hw ether $(macaddr_add "$mac" 1) 2>/dev/null
+		ifconfig lan1 hw ether $(macaddr_add "$mac" 2) 2>/dev/null
+		ifconfig lan2 hw ether $(macaddr_add "$mac" 3) 2>/dev/null
+		ifconfig lan3 hw ether $(macaddr_add "$mac" 4) 2>/dev/null
+		ifconfig wan hw ether $(macaddr_add "$mac" 5) 2>/dev/null
 		;;
 	esac
 
