@@ -31,7 +31,7 @@ armada-xp-linksys-mamba)
 	;;
 globalscale,espressobin|\
 marvell,armada8040-mcbin)
-	ubootenv_add_uci_config "/dev/mtd0" "0x3f0000" "0x10000" "0x10000" "1"
+	ubootenv_add_uci_config "/dev/mmcblk1boot1" "0x100000" "0x10000" "0x10000"
 	;;
 esac
 
