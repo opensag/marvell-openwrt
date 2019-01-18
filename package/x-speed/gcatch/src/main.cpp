@@ -38,6 +38,9 @@ int g_total_write_to_file = 0;
 int g_max_file_size = 200*1024*1024;
 unsigned char g_one_file_only = 0;
 
+#define STOP_FLAG_FILE "stop_cat"
+#define SHOW_FLAG_FILE "show_cat"
+
 void* simple_thread(void *arg)
 {
 	int i = 10;
@@ -150,8 +153,11 @@ int main(int argc, char **argv) {
   
   printf("input 'q' to quit application.\n");
 
+  FILE *fp_temp = NULL;
+  system("rm -rf "STOP_FLAG_FILE);
   while(true)
   {
+  #if 0
     char choice;
     scanf("%c",&choice);
     if(choice == 'q' || choice =='Q')
@@ -163,6 +169,28 @@ int main(int argc, char **argv) {
     {
         print_log = true;
     }
+  #endif
+	fp_temp = fopen(SHOW_FLAG_FILE, "rb");
+	if (NULL != fp_temp)
+	{
+		print_log = true;
+		fclose(fp_temp);
+		fp_temp = NULL;
+		system("rm -rf "SHOW_FLAG_FILE);
+	}
+
+	
+	fp_temp = fopen(STOP_FLAG_FILE, "rb");
+	if (NULL == fp_temp)
+	{
+		sleep(5);
+		continue;
+	}
+
+	fclose(fp_temp);
+	fp_temp = NULL;
+    g_stop_log = true;
+	break;
   }
 
   while ((0 == read_port_thread_exit) || (0 == write_file_thread_exit))
