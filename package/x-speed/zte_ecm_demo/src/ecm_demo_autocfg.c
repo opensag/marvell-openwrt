@@ -7,7 +7,6 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/sem.h>
-//#include <error.h>
 #include <errno.h>
 
 #include "ecm_demo_config.h"
@@ -198,7 +197,7 @@ static int ECM_sem_get(int semflg)
 
     if (semid<0)
     {
-       //ECM_log(ECM_LOG_L_1,"ECM_sem_get error: %s. \n", sys_errlist[errno]);
+       ECM_log(ECM_LOG_L_1,"ECM_sem_get error:\n");
        return -2;
     }
 
@@ -234,7 +233,7 @@ static int ECM_sem_ctl(int semid, int semnum, int cmd, union semun arg)
     if (retval<0)
     {
        //printf("ECM_sem_ctl error%01d",retval);
-       //ECM_log(ECM_LOG_L_1,"semctl error: %s. \n", sys_errlist[errno]);
+       ECM_log(ECM_LOG_L_1,"semctl error:\n");
     }
     return retval;
 }
@@ -257,7 +256,7 @@ static int ECM_sem_op(int semid, struct sembuf *sops, unsigned nsops)
         if (-1 == retval)
         {       
            //ECM_log(ECM_LOG_L_1,"ECM_sem_op error%01d",retval);
-           //ECM_log(ECM_LOG_L_1,"semop error: %s. \n", sys_errlist[errno]);
+           ECM_log(ECM_LOG_L_1,"semop error:\n");
         }    
     }
 

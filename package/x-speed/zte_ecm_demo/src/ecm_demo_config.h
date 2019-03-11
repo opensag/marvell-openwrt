@@ -4,8 +4,8 @@
  * @Copyright:                      GoSUNCN
 * @Website:                         www.ztewelink.com
 * @Email:                           ztewelink@zte.com.cn
-* @version:                         "ECM_CALLV1.0.0B10"
-* @date:                            "2018-11-19"
+* @version:                         "ECM_CALLV1.0.1B02"
+* @date:                            "2019-02-11"
 
 * History:
 
@@ -44,6 +44,37 @@
 ......................................................................................For Alibaba Linux OpenWRT system.
 ......................................................................................ECM_CALLV1.0.0B10
 ......................................................................................Wei,LI,2018_11_19
+
+1. If LTE Module switch port, fix the switch port bugs...
+2. Adjust some log information 
+
+......................................................................................For Alibaba Linux OpenWRT system.
+......................................................................................ECM_CALLV1.0.0B10
+......................................................................................Wei,LI,2019_01_11
+
+
+1. Change local varible to global variable: g_ecm_auto_serial_demo
+2. Adjust some log information 
+
+......................................................................................For Alibaba Linux OpenWRT system.
+......................................................................................ECM_CALLV1.0.1B01
+......................................................................................Wei,LI,2019_01_11
+
+
+1. Fix bugs if AT+ZECMCALL=0 return ERROR
+2. Reboot Flow don't exec AT+ZECMCALL=0
+
+......................................................................................For Alibaba Linux OpenWRT system.
+......................................................................................ECM_CALLV1.0.1B02
+......................................................................................Wei,LI,2019_01_31
+
+
+
+1. Add new requirement of signal strength LED
+2. on optimizing Log print
+......................................................................................For Alibaba Linux OpenWRT system.
+......................................................................................ECM_CALLV1.0.1B03
+......................................................................................Wei,LI,2019_02_27
 
 * ============================================================================*/
 
@@ -91,12 +122,15 @@
 #define ECM_AUTO_RETRY_INTV                    15    /*ECM auto connnect interv time*/
 
 
-#define ECM_CALL_VERSION                       "ECM_CALLV1.0.0B10"
+#define ECM_CALL_VERSION                       "ECM_CALLV1.0.1B03"
 
-#define ECM_CALL_DATE                          "2018-11-19"
+#define ECM_CALL_DATE                          "2019-02-27"
 
 #define ECM_CALL_AUTO_PORT                     ECM_DEMO_ON
 
+/*add liwei for fix gswerr id 0000 start */
+#define ECM_CALL_FIX_GSWERR_ID_0000                          ECM_DEMO_ON
+/*add liwei for fix gswerr id 0000 end */
 #if 0
 #define   ECM_CALL_HOST_PLUG_POLARITY                        1
 #define ECM_CALL_HOST_PLUG_PULL                              3
@@ -105,14 +139,26 @@
 #define ECM_CALL_HOST_PLUG_PULL                              0
 #endif
 
-/*add liwei for xspeed project led operation*/
-#define ECM_AUTO_LED_ON                        ECM_DEMO_ON
+/*add liwei for ali project led operation*/
+#define ECM_AUTO_LED_ON                        ECM_DEMO_OFF
+
+/*add liwei for ali project signal led operation*/
+#define ECM_AUTO_SIG_LEVEL_LED_ON                          ECM_DEMO_ON
+
 
 #if (ECM_AUTO_LED_ON==ECM_DEMO_ON)
 #define ECM_ALED_NODE_ON                           "/sys/class/leds/lte/delay_on"
 #define ECM_ALED_NODE_OFF                          "/sys/class/leds/lte/delay_off"
 #define ECM_ALED_CMD_STR_LEN                       64
 #endif
+
+#if (ECM_AUTO_SIG_LEVEL_LED_ON==ECM_DEMO_ON)
+#define ECM_ASLLED_NODE_0                            "/sys/class/leds/lte_0/brightness"
+#define ECM_ASLLED_NODE_1                            "/sys/class/leds/lte_1/brightness"
+#define ECM_ASLLED_NODE_2                            "/sys/class/leds/lte_2/brightness"
+#define ECM_ASLLED_CMD_STR_LEN                       64
+#endif
+
 
 typedef enum
 {
@@ -371,6 +417,16 @@ typedef enum
     E_ECM_PERSON_AT_OTHER_ERR=324,/* Personalization at send                 other error*/
     E_ECM_PERSON_AT_TERMINAL=325,/* Personalization at send terminal */
 
+/*add liwei for fix gswerr id 0000 start */
+#if (ECM_CALL_FIX_GSWERR_ID_0000    ==ECM_DEMO_ON)
+    E_ECM_GSWERR_QUERY_FAIL=330,/* AT+GSWERR=0000: send fail */
+    E_ECM_GSWERR_QRECV_ISSUE=331,/* AT+GSWERR=0000: recv fail */
+    E_ECM_GSWERR_QUERY_MAX=332,/* AT+GSWERR=0000: send                over max*/
+    E_ECM_GSWERR_QRESEND_ERR=333,/* AT+GSWERR=0000: send                over max*/
+    E_ECM_GSWERR_QOTHER_ERR=334,/* AT+GSWERR=0000: send                 other error*/
+    E_ECM_GSWERR_QTERMINAL=335,            /* AT+GSWERR=0000: send terminal */
+#endif
+/*add liwei for fix gswerr id 0000 end */
 
 } ECM_ERROR_CODE_TABLE_T;
 
@@ -452,6 +508,13 @@ void ECM_log(unsigned int log_level, const char* msg, ...);
 void ECM_aux_led_on(void);
 void ECM_aux_led_off(void);
 void ECM_aux_led_fls(void);
+#endif
+
+#if (ECM_AUTO_SIG_LEVEL_LED_ON==ECM_DEMO_ON)
+void ECM_aux_set_siglevel_led_off(void);
+void ECM_aux_set_siglevel_led_low(void);
+void ECM_aux_set_siglevel_led_middle(void);
+void ECM_aux_set_siglevel_led_high(void);
 #endif
 
 #endif

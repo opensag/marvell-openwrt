@@ -231,6 +231,21 @@ const ttyusb_drv_xport_t ttyusb_drv_map_tab[] =
         .magic = 0 ,
     },
 };
+/*add liwei for port error start*/
+unsigned int g_ttyusb_recv_thxd_fail_flag = 0 ;
+/*add liwei for port error end*/
+
+/*add liwei for port error start*/
+unsigned   int  ttyusb_get_thxd_failed_flg(void)
+{
+    return g_ttyusb_recv_thxd_fail_flag ;
+}
+unsigned   int  ttyusb_get_clear_failed_flg(void)
+{
+    g_ttyusb_recv_thxd_fail_flag = 0 ;
+}
+
+/*add liwei for port error end*/
 
 void ttyusb_cancel_thxd(ttyusb_dev_t* p_serial)
 {
@@ -238,10 +253,13 @@ void ttyusb_cancel_thxd(ttyusb_dev_t* p_serial)
     {
         if (TTY_RECV_UP==p_serial->tty_ptxd_state)
         {
-            p_serial->tty_ptxd_state = TTY_RECV_KILL;
+            /*add liwei for start resolve fd issue start*/
+            ttyusb_close(p_serial);
             pthread_cancel(p_serial->tty_ptxd_listen);
             pthread_join(p_serial->tty_ptxd_listen,NULL);
+            p_serial->tty_ptxd_state = TTY_RECV_KILL;
             ECM_log(ECM_LOG_L_2,"[info] ttyusb_recv_thxd exit");
+            /*add liwei for start resolve fd issue end*/
         }
     }
 }
@@ -279,26 +297,67 @@ void* ttyusb_recv_thxd(void* para)
         while(TTY_RECV_KILL!= p_serial->tty_ptxd_state)
         {
 
-            /*add cancel point*/
-            pthread_testcancel();
-
-            bzero((void*)txd_buff, TTYUSB_BUF_LEN);
-            read_len = read(p_serial->tty_fd, txd_buff, TTYUSB_BUF_LEN-1);/*cancel point*/
-            txd_buff[TTYUSB_BUF_LEN-1] = 0;
-            if ((read_len>0) && (read_len < TTYUSB_BUF_LEN))
+            /*add liwei for start resolve fd issue start*/
+            if(-1 != p_serial->tty_fd)
             {
-                txd_buff[read_len] = 0;
-                if (p_serial->tty_recv_cb)
+                /*add cancel point*/
+                pthread_testcancel();
+                
+                bzero((void*)txd_buff, TTYUSB_BUF_LEN);
+
+                read_len = read(p_serial->tty_fd, txd_buff, TTYUSB_BUF_LEN-1);/*cancel point*/
+
+                txd_buff[TTYUSB_BUF_LEN-1] = 0;
+                if ((read_len>0) && (read_len < TTYUSB_BUF_LEN))
                 {
-                    (*(p_serial->tty_recv_cb))(txd_buff,read_len);
+                    txd_buff[read_len] = 0;
+                    if (p_serial->tty_recv_cb)
+                    {
+                        (*(p_serial->tty_recv_cb))(txd_buff,read_len);
+                    }
                 }
+                else
+                {
+                    /* for user defined nonblock*/
+                    usleep(ECM_AT_RECV_INTV);
+                
+                    /*add liwei for port error start*/
+                    ++ g_ttyusb_recv_thxd_fail_flag  ;
+                    /*add liwei for port error end*/
+                
+                    if (TTY_RECV_KILL!= p_serial->tty_ptxd_state)
+                    {
+						ECM_log(ECM_LOG_L_3,"[info] ttyusb_recv_thxd interv(work:%d)", p_serial->tty_ptxd_state);
+                        
+                    }
+                    else
+                    {
+                        ECM_log(ECM_LOG_L_3,"[info] ttyusb_recv_thxd interv(suspend)");
+                    }
+                
+                }
+
             }
             else
             {
                 /* for user defined nonblock*/
                 usleep(ECM_AT_RECV_INTV);
-                ECM_log(ECM_LOG_L_3,"[info] ttyusb_recv_thxd interv");
+                
+                /*add liwei for port error start*/
+                ++ g_ttyusb_recv_thxd_fail_flag  ;
+                /*add liwei for port error end*/
+                
+                if (TTY_RECV_KILL!= p_serial->tty_ptxd_state)
+                {                    
+					ECM_log(ECM_LOG_L_3,"[info] ttyusb_recv_thxd interv(suspend wait be killed:%d)", p_serial->tty_ptxd_state);
+                }
+                else
+                {
+					ECM_log(ECM_LOG_L_3,"[info] ttyusb_recv_thxd interv(suspend but killed)");
+                }
+
             }
+            /*add liwei for start resolve fd issue end*/
 
             /*add cancel point*/
             pthread_testcancel();
@@ -369,6 +428,12 @@ void ttyusb_init(ttyusb_dev_t* p_serial)
 {
     if (p_serial)
     {
+        /*add liwei for start resolve fd issue start*/
+        if(-1 != p_serial->tty_fd)
+        {
+            ECM_log(ECM_LOG_L_3,"[info] unresolved ttyusb_init fd=%lu",p_serial->tty_fd);
+        }
+        /*add liwei for start resolve fd issue end*/
         bzero((void*)p_serial,sizeof(ttyusb_dev_t));
         p_serial->tty_fd = -1 ;
     }
@@ -450,11 +515,20 @@ unsigned int ttyusb_open(ttyusb_dev_t* p_serial)
         /*open serial port*/
         p_serial->tty_oflag=O_RDWR ;//|O_NOCTTY|O_NONBLOCK|O_NDELAY 
         p_serial->tty_fd = open(p_serial->tty_path, p_serial->tty_oflag);
+
         if(p_serial->tty_fd<0)
         {  
             error = E_TTYUSB_OPEN_TTY_DEV_FAIL;
             break;
         }
+
+        /*add liwei for start resolve fd issue start*/
+        if(-1 != p_serial->tty_fd)
+        {
+            ECM_log(ECM_LOG_L_2,"[info] ttyusb_open fd=%lu",p_serial->tty_fd);
+        }
+        /*add liwei for start resolve fd issue end*/
+
 
 #ifdef POSIX_TERMIOS
         /*backup serial port parameter*/
@@ -462,9 +536,18 @@ unsigned int ttyusb_open(ttyusb_dev_t* p_serial)
         {
             if (0!=tcgetattr(p_serial->tty_fd,&(p_serial->tty_tio_bak)))
             {
-                error = E_TTYUSB_OPEN_TTY_BAK_CFG;
-                close(p_serial->tty_fd);
-                p_serial->tty_fd = -1 ;
+                error = E_TTYUSB_OPEN_TTY_BAK_CFG;                
+                /*add liwei for start resolve fd issue start*/
+                if(0 != close(p_serial->tty_fd))
+                {
+                    ECM_log(ECM_LOG_L_1,"[info] ttyusb_open close fd fail pos0");
+                }
+                else
+                {
+                    p_serial->tty_fd = -1 ;
+                    ECM_log(ECM_LOG_L_3,"[info] ttyusb_open close fd ok pos0");
+                }
+                /*add liwei for start resolve fd issue end*/
                 break;
             }
         }
@@ -477,8 +560,19 @@ unsigned int ttyusb_open(ttyusb_dev_t* p_serial)
         if (tmp_var < 0)
         {
             error = E_TTYUSB_OPEN_TTY_FCNTL_ERR;
-            close(p_serial->tty_fd);
-            p_serial->tty_fd = -1 ;
+            /*add liwei for start resolve fd issue start*/
+            if(0 != close(p_serial->tty_fd))
+            {
+                ECM_log(ECM_LOG_L_1,"[info] ttyusb_open close fd fail pos1");
+            }
+            else
+            {
+                p_serial->tty_fd = -1 ;
+                ECM_log(ECM_LOG_L_3,"[info] ttyusb_open close fd ok pos1");
+            }
+            /*add liwei for start resolve fd issue end*/
+
+
             break;
         }
 
@@ -519,8 +613,18 @@ void ttyusb_close(ttyusb_dev_t* p_serial)
         /*close file description*/
         if ((TTY_O_DEFAULT==p_serial->tty_type) || (TTY_O_USR_PATH==p_serial->tty_type))
         {
-            close(p_serial->tty_fd);
-            p_serial->tty_fd = -1;
+            /*add liwei for start resolve fd issue start*/
+            if(0 != close(p_serial->tty_fd))
+            {
+                ECM_log(ECM_LOG_L_1,"[info] ttyusb_close close fd fail");
+            }
+            else
+            {
+                p_serial->tty_fd = -1;
+                ECM_log(ECM_LOG_L_3,"[info] ttyusb_close close fd ok");
+            }
+            /*add liwei for start resolve fd issue end*/
+
         }
         else if (TTY_O_USR_SPC_FD==p_serial->tty_type)
         {

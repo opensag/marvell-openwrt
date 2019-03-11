@@ -4,8 +4,8 @@
  * @Copyright:                      GoSUNCN
 * @Website:                         www.ztewelink.com
 * @Email:                           ztewelink@zte.com.cn
-* @version:                         "ECM_CALLV1.0.0B10"
-* @date:                            "2018-11-19"
+* @version:                         "ECM_CALLV1.0.1B03"
+* @date:                            "2019-02-27"
 * ============================================================================*/
 
 
@@ -183,11 +183,21 @@ unsigned int    ECM_auto_demo_get_retry_times(void);
 unsigned int    ECM_auto_demo_get_error_code(void);
 
 
-/*add liwei for xspeed project led operation*/
+/*add liwei for ali project led operation*/
 #if (ECM_AUTO_LED_ON==ECM_DEMO_ON)
 void ECM_auto_led_func_start(void);
 #endif
 
+/*add liwei for fix gswerr id 0000 start */
+#if (ECM_CALL_FIX_GSWERR_ID_0000    ==ECM_DEMO_ON)
+
+unsigned int    ECM_get_gswerr_id_000_status(void);
+
+
+void            ECM_clr_gswerr_id_000_status(void);
+
+#endif
+/*add liwei for fix gswerr id 0000 end */
 
 #endif
 

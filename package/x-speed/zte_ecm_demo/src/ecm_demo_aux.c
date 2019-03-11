@@ -35,7 +35,7 @@ void ECM_log(unsigned int log_level, const char* msg, ...)
 {
     char    buf[ITC_DBG_BUF_LEN+64] = {0};
     va_list ap;
-
+    
     va_start(ap,msg);
     vsprintf(buf,msg,ap);
     va_end(ap);
@@ -64,7 +64,6 @@ void ECM_aux_led_on(void)
     sprintf(led_cmd_str,"echo 200 > %s",ECM_ALED_NODE_ON);
     if(0==access(ECM_ALED_NODE_ON, F_OK))
     {
-        ECM_print("%s", led_cmd_str);
         system(led_cmd_str);
     }
 
@@ -119,3 +118,127 @@ void ECM_aux_led_fls(void)
 }
 
 #endif
+
+
+#if (ECM_AUTO_SIG_LEVEL_LED_ON==ECM_DEMO_ON)
+
+void ECM_aux_set_siglevel_led_off(void)
+{
+    char led_cmd_str[ECM_ASLLED_CMD_STR_LEN] ;
+
+    bzero((void*)led_cmd_str,ECM_ASLLED_CMD_STR_LEN);
+    sprintf(led_cmd_str,"echo 0 > %s",ECM_ASLLED_NODE_0);
+    if(0==access(ECM_ASLLED_NODE_0, F_OK))
+    {
+        system(led_cmd_str);
+    }
+
+    bzero((void*)led_cmd_str,ECM_ASLLED_CMD_STR_LEN);
+    sprintf(led_cmd_str,"echo 0 > %s",ECM_ASLLED_NODE_1);
+    if(0==access(ECM_ASLLED_NODE_1, F_OK))
+    {
+        system(led_cmd_str);
+    }
+
+    bzero((void*)led_cmd_str,ECM_ASLLED_CMD_STR_LEN);
+    sprintf(led_cmd_str,"echo 0 > %s",ECM_ASLLED_NODE_2);
+    if(0==access(ECM_ASLLED_NODE_2, F_OK))
+    {
+        system(led_cmd_str);
+    }
+
+    ECM_log(ECM_LOG_L_3,"[info] Set LED Level Low");
+}
+
+
+
+void ECM_aux_set_siglevel_led_low(void)
+{
+    char led_cmd_str[ECM_ASLLED_CMD_STR_LEN] ;
+
+    bzero((void*)led_cmd_str,ECM_ASLLED_CMD_STR_LEN);
+    sprintf(led_cmd_str,"echo 1 > %s",ECM_ASLLED_NODE_0);
+    if(0==access(ECM_ASLLED_NODE_0, F_OK))
+    {
+        system(led_cmd_str);
+    }
+
+    bzero((void*)led_cmd_str,ECM_ASLLED_CMD_STR_LEN);
+    sprintf(led_cmd_str,"echo 0 > %s",ECM_ASLLED_NODE_1);
+    if(0==access(ECM_ASLLED_NODE_1, F_OK))
+    {
+        system(led_cmd_str);
+    }
+
+    bzero((void*)led_cmd_str,ECM_ASLLED_CMD_STR_LEN);
+    sprintf(led_cmd_str,"echo 0 > %s",ECM_ASLLED_NODE_2);
+    if(0==access(ECM_ASLLED_NODE_2, F_OK))
+    {
+        system(led_cmd_str);
+    }
+
+    ECM_log(ECM_LOG_L_3,"[info] Set LED Level Low");
+}
+
+void ECM_aux_set_siglevel_led_middle(void)
+{
+    char led_cmd_str[ECM_ASLLED_CMD_STR_LEN] ;
+
+    bzero((void*)led_cmd_str,ECM_ASLLED_CMD_STR_LEN);
+    sprintf(led_cmd_str,"echo 1 > %s",ECM_ASLLED_NODE_0);
+    if(0==access(ECM_ASLLED_NODE_0, F_OK))
+    {
+        system(led_cmd_str);
+    }
+
+    bzero((void*)led_cmd_str,ECM_ASLLED_CMD_STR_LEN);
+    sprintf(led_cmd_str,"echo 1 > %s",ECM_ASLLED_NODE_1);
+    if(0==access(ECM_ASLLED_NODE_1, F_OK))
+    {
+        system(led_cmd_str);
+    }
+
+    bzero((void*)led_cmd_str,ECM_ASLLED_CMD_STR_LEN);
+    sprintf(led_cmd_str,"echo 0 > %s",ECM_ASLLED_NODE_2);
+    if(0==access(ECM_ASLLED_NODE_2, F_OK))
+    {
+        system(led_cmd_str);
+    }
+
+    ECM_log(ECM_LOG_L_3,"[info] Set LED Level Middle");
+}
+
+void ECM_aux_set_siglevel_led_high(void)
+{
+    char led_cmd_str[ECM_ASLLED_CMD_STR_LEN] ;
+
+    bzero((void*)led_cmd_str,ECM_ASLLED_CMD_STR_LEN);
+    sprintf(led_cmd_str,"echo 1 > %s",ECM_ASLLED_NODE_0);
+    if(0==access(ECM_ASLLED_NODE_0, F_OK))
+    {
+        system(led_cmd_str);
+    }
+
+    bzero((void*)led_cmd_str,ECM_ASLLED_CMD_STR_LEN);
+    sprintf(led_cmd_str,"echo 1 > %s",ECM_ASLLED_NODE_1);
+    if(0==access(ECM_ASLLED_NODE_1, F_OK))
+    {
+        system(led_cmd_str);
+    }
+
+    bzero((void*)led_cmd_str,ECM_ASLLED_CMD_STR_LEN);
+    sprintf(led_cmd_str,"echo 1 > %s",ECM_ASLLED_NODE_2);
+    if(0==access(ECM_ASLLED_NODE_2, F_OK))
+    {
+        system(led_cmd_str);
+    }
+
+    ECM_log(ECM_LOG_L_3,"[info] Set LED Level High");
+}
+
+
+
+#endif
+
+
+
