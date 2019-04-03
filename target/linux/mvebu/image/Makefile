@@ -72,6 +72,7 @@ endef
 define Build/sysupgrade-rootfs
 	$(INSTALL_DIR) $(TARGET_DIR)/boot
 	$(CP) $(KDIR)/Image $(TARGET_DIR)/boot/Image
+	$(CP) $(DTS_DIR)/$(DEVICE_DTS).dtb $(TARGET_DIR)/boot/fdt.dtb
 	$(CP) $(DTS_DIR)/armada-3720-nm11.dtb $(TARGET_DIR)/boot/
         $(CP) $(DTS_DIR)/armada-3720-nm14.dtb $(TARGET_DIR)/boot/
 
