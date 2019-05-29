@@ -45,6 +45,7 @@ armada-xp-gp)
 	;;
 globalscale,espressobin)
 	ucidef_set_interfaces_lan_wan "lan0 lan1 lan2 lan3" "wan"
+	ucidef_set_interface_raw "lte" "usb0" "dhcp"
 	;;
 marvell,armada8040-mcbin)
 	ucidef_set_interfaces_lan_wan "eth0 eth1 eth3" "eth2"
