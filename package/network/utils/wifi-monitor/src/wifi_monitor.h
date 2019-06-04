@@ -2,7 +2,9 @@
 #define _WIFI_RESTART_H_
 
 #define LOG_FILE "/etc/wifi_monitor"
-#define MODULE_PATH "/lib/modules/4.14.22+"
+/* chg by marvell 20190603 */
+//#define MODULE_PATH "/lib/modules/4.14.22+"
+#define MODULE_PATH "/lib/modules/4.14.22-geb01e85-dirty"
 #define MODULE_NAME "mwlwifi"
 #define PCIE_RESET_PATH "/sys/class/leds/pcie-reset/brightness"
 #define PCIE_REMOVE_PATH "/sys/devices/platform/soc/d0070000.pcie/pci0000:00/0000:00:00.0/remove"
