@@ -27,4 +27,17 @@ define Device/xspeed-nmxx
 endef
 TARGET_DEVICES += xspeed-nmxx
 
+define Device/xspeed-rcxx
+  KERNEL_NAME := Image
+  KERNEL := kernel-bin
+  DEVICE_TITLE := RCXX (X-Speed Armada 3700 RCXX Board)
+  DEVICE_PACKAGES := e2fsprogs ethtool mkf2fs kmod-fs-vfat kmod-usb2 kmod-usb3 kmod-usb-storage
+  IMAGES := sysupgrade-rootfs.tar.gz
+  IMAGE/sysupgrade-rootfs.tar.gz := sysupgrade-rootfs
+  DEVICE_DTS := armada-3720-rc01
+  DTS_DIR := $(DTS_DIR)/marvell
+  SUPPORTED_DEVICES := x-speed,rcxx
+endef
+TARGET_DEVICES += xspeed-rcxx
+
 endif
