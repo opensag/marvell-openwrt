@@ -54,7 +54,7 @@ vti_setup() {
 		exit
 	}
 
-	( proto_add_host_dependency "$cfg" "$peeraddr" "$tunlink" )
+	#( proto_add_host_dependency "$cfg" "$peeraddr" "$tunlink" )
 
 	[ -z "$ipaddr" ] && {
 		local wanif="$tunlink"
@@ -91,7 +91,7 @@ vti6_setup() {
 		exit
 	}
 
-	( proto_add_host_dependency "$cfg" "$peer6addr" "$tunlink" )
+	#( proto_add_host_dependency "$cfg" "$peer6addr" "$tunlink" )
 
 	[ -z "$ip6addr" ] && {
 		local wanif="$tunlink"
