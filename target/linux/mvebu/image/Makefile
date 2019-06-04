@@ -74,7 +74,8 @@ define Build/sysupgrade-rootfs
 	$(CP) $(KDIR)/Image $(TARGET_DIR)/boot/Image
 	$(CP) $(DTS_DIR)/$(DEVICE_DTS).dtb $(TARGET_DIR)/boot/fdt.dtb
 	$(CP) $(DTS_DIR)/armada-3720-nm11.dtb $(TARGET_DIR)/boot/
-        $(CP) $(DTS_DIR)/armada-3720-nm14.dtb $(TARGET_DIR)/boot/
+	$(CP) $(DTS_DIR)/armada-3720-nm14.dtb $(TARGET_DIR)/boot/
+        $(CP) $(DTS_DIR)/armada-3720-rc01.dtb $(TARGET_DIR)/boot/
 
 	$(TAR) -cp --numeric-owner --owner=0 --group=0 --sort=name \
 		$(if $(SOURCE_DATE_EPOCH),--mtime="@$(SOURCE_DATE_EPOCH)") \
