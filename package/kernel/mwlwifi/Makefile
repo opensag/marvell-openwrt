@@ -1,5 +1,4 @@
-
-
+#
 # Copyright (C) 2014-2016 OpenWrt.org
 #
 # This is free software, licensed under the GNU General Public License v2.
@@ -16,9 +15,9 @@ PKG_LICENSE_FILES:=
 
 PKG_SOURCE_URL:=https://github.com/kaloz/mwlwifi
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_DATE:=2018-12-18
+PKG_SOURCE_DATE:=2019-03-03
 PKG_SOURCE_VERSION:=31d9386079b91cc699658c19294e139b62b512bc
-PKG_MIRROR_HASH:=skip
+PKG_MIRROR_HASH:=f7939bd29ae23d607cc12496052e5ba51c756fc9528211ba7cf15f33a10192d5
 
 PKG_MAINTAINER:=Imre Kaloz <kaloz@openwrt.org>
 PKG_BUILD_PARALLEL:=1
