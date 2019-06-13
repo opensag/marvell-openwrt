@@ -154,8 +154,6 @@ mac80211_hostapd_setup_base() {
 		mac80211_add_capabilities ht_capab_flags $ht_cap_mask \
 			LDPC:0x1::$ldpc \
 			GF:0x10::$greenfield \
-			SHORT-GI-20:0x20::$short_gi_20 \
-			SHORT-GI-40:0x40::$short_gi_40 \
 			TX-STBC:0x80::$tx_stbc \
 			RX-STBC1:0x300:0x100:1 \
 			RX-STBC12:0x300:0x200:1 \
