@@ -80,6 +80,7 @@ define Build/sysupgrade-rootfs
 	$(TAR) -cp --numeric-owner --owner=0 --group=0 --sort=name \
 		$(if $(SOURCE_DATE_EPOCH),--mtime="@$(SOURCE_DATE_EPOCH)") \
 		-C $(TARGET_DIR)/ . | gzip -9n > $@
+	$(STAGING_DIR_HOST)/bin/make_ext4fs -l 72M -b 4096 -m 0 -J $(BIN_DIR)/rcsysups.ext4 $(TARGET_DIR)
 endef
 
 define Build/omnia-medkit-initramfs
