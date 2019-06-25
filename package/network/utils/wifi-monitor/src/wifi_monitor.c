@@ -140,8 +140,20 @@ static int pcie_reset(void)
 */
 	FILE *fp = NULL;
 	uint32_t value = 0;
+        uint32_t board_value = 0;
 	char value_str[56];
+        char board_str[56];
 	char cmd_str[56];
+
+        fp = popen("devmem 0xd0013810", "r");
+        if (!fp)
+                return -1;
+
+        memset(board_str, 0, sizeof(board_str));
+        fgets(board_str, sizeof(board_str)-1, fp);
+        fclose(fp);
+        if (sscanf(board_str, "%x", &board_value) != 1)
+                return -1;
 
 	fp = popen("devmem 0xd0018818", "r");
 	if (!fp)
@@ -154,14 +166,26 @@ static int pcie_reset(void)
 		return -1;
 
 	memset(cmd_str, 0, sizeof(cmd_str));
-	snprintf(cmd_str, sizeof(cmd_str)-1, "%s 0x%x",
-			"devmem 0xd0018818 32", value & 0xfffffff7);
+        if ((board_value & 0xe00000) == 0x800000) {
+            snprintf(cmd_str, sizeof(cmd_str)-1, "%s 0x%x",
+                        "devmem 0xd0018818 32", value & 0xfffffff3);
+        } else {
+            snprintf(cmd_str, sizeof(cmd_str)-1, "%s 0x%x",
+                        "devmem 0xd0018818 32", value & 0xfffffff7);
+
+        }
+
 	system(cmd_str);
 	usleep(200000);
 
 	memset(cmd_str, 0, sizeof(cmd_str));
-	snprintf(cmd_str, sizeof(cmd_str)-1, "%s 0x%x",
-			"devmem 0xd0018818 32", value | 0x8);
+        if ((board_value & 0xe00000) == 0x800000) {
+            snprintf(cmd_str, sizeof(cmd_str)-1, "%s 0x%x",
+                        "devmem 0xd0018818 32", value | 0xc);
+        } else {
+            snprintf(cmd_str, sizeof(cmd_str)-1, "%s 0x%x",
+                        "devmem 0xd0018818 32", value | 0x8);
+        }
 	system(cmd_str);
 	usleep(200000);
 
