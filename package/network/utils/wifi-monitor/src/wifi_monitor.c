@@ -71,8 +71,15 @@ static int insmod(const char *path, const char *name, const char *options)
 	char full_path[128];
 
 	memset(full_path, 0, sizeof(full_path));
-	snprintf(full_path, sizeof(full_path)-1, "%s/%s.ko",
-			path, name);
+	if(uname(&uts)) {
+		ULOG_ERR("can't get uname\n");
+		printf("can't get uname\n");
+		return ret;
+	}
+
+	printf("uname %s\n", uts.release);
+	snprintf(full_path, sizeof(full_path)-1, "lib/modules/%s/%s.ko", uts.release, name);
+	printf("full_path %s\n", full_path);
 
 	if (stat(full_path, &s)) {
 		ULOG_ERR("missing module %s\n", full_path);
@@ -117,7 +124,7 @@ static int pcie_reset(void)
 {
 /*
 	int fd;
-	int delay_time = 200 * 1000; // 200ms
+	int delay_time = 500 * 1000; // 500ms
 
 	fd = open(PCIE_RESET_PATH, O_WRONLY);
 	if (fd < 0)
