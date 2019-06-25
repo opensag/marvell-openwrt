@@ -7,6 +7,7 @@
 #include <sys/syscall.h>
 #include <sys/stat.h>
 #include <pthread.h>
+#include <sys/utsname.h>
 #include <libubus.h>
 #include <libubox/ulog.h>
 #include <linux/nl80211.h>
@@ -67,6 +68,7 @@ static int insmod(const char *path, const char *name, const char *options)
 {
 	void *data = 0;
 	struct stat s;
+        struct utsname uts;
 	int fd, ret = -1;
 	char full_path[128];
 
