@@ -1,0 +1,20 @@
+Source-Makefile: feeds/lte/ecmdemo/Makefile
+
+Package: ecmdemo
+Version: 1
+Depends: +libc +GCC_LIBSSP:libssp +USE_GLIBC:librt +USE_GLIBC:libpthread +kmod-usb-net +kmod-usb-net-cdc-ether +kmod-usb-serial +kmod-usb-serial-option +kmod-usb-serial-wwan +kmod-ppp +kmod-ppp-synctty
+Conflicts: 
+Menu-Depends: 
+Provides: 
+Section: base
+Category: ECM DEMO
+Repository: base
+Title: ETL device auto dial ECM tool
+Maintainer: 
+Source: 
+Type: ipkg
+Description: ETL device auto dial ECM tool
+
+@@
+
+
