@@ -70,6 +70,11 @@ ucidef_set_interface_lan() {
 	_ucidef_set_interface lan "$@"
 	json_select ..
 }
+ucidef_set_interface_cell() {
+	json_select_object network
+	_ucidef_set_interface cell "$@"
+	json_select ..
+}
 
 ucidef_set_interface_wan() {
 	json_select_object network
