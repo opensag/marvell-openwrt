@@ -1,0 +1,10 @@
+<config>
+  <image_tree>
+    <name>CNSS.LEA_RM.3.0</name>
+    <build_id>CNSS.LEA_RM.3.0-00017-QCA6174LEARMZ-1</build_id>
+    <branch_point_revision/>
+    <revision>00017</revision>
+    <spin>1</spin>
+    <client>QCA6174LEARMZ</client>
+  </image_tree>
+</config>

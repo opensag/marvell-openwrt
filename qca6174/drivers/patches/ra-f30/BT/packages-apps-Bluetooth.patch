@@ -1,0 +1,1695 @@
+diff --git a/jni/com_android_bluetooth_a2dp.cpp b/jni/com_android_bluetooth_a2dp.cpp
+index 2b4cb56..91e7b8b 100644
+--- a/jni/com_android_bluetooth_a2dp.cpp
++++ b/jni/com_android_bluetooth_a2dp.cpp
+@@ -1,4 +1,12 @@
+ /*
++ * Copyright (c) 2017 Qualcomm Technologies, Inc.
++ * All Rights Reserved.
++ * Confidential and Proprietary - Qualcomm Technologies, Inc.
++ *
++ * NOT A CONTRIBUTION
++ * Apache license notifications and license are retained
++ * for attribution purposes only.
++ *
+  * Copyright (C) 2012 The Android Open Source Project
+  *
+  * Licensed under the Apache License, Version 2.0 (the "License");
+@@ -28,6 +36,7 @@
+ namespace android {
+ static jmethodID method_onConnectionStateChanged;
+ static jmethodID method_onAudioStateChanged;
++static jmethodID method_onCheckConnectionPriority;
+ 
+ static const btav_interface_t *sBluetoothA2dpInterface = NULL;
+ static jobject mCallbacksObj = NULL;
+@@ -93,11 +102,34 @@ static void bta2dp_audio_state_callback(btav_audio_state_t state, bt_bdaddr_t* b
+     sCallbackEnv->DeleteLocalRef(addr);
+ }
+ 
++static void bta2dp_connection_priority_callback(bt_bdaddr_t* bd_addr) {
++    jbyteArray addr;
++
++    ALOGI("%s", __FUNCTION__);
++
++    if (!checkCallbackThread()) {                                       \
++        ALOGE("Callback: '%s' is not called on the correct thread", __FUNCTION__); \
++        return;                                                         \
++    }
++    addr = sCallbackEnv->NewByteArray(sizeof(bt_bdaddr_t));
++    if (!addr) {
++        ALOGE("Fail to new jbyteArray bd addr for connection state");
++        checkAndClearExceptionFromCallback(sCallbackEnv, __FUNCTION__);
++        return;
++    }
++
++    sCallbackEnv->SetByteArrayRegion(addr, 0, sizeof(bt_bdaddr_t), (jbyte*) bd_addr);
++    sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onCheckConnectionPriority, addr);
++    checkAndClearExceptionFromCallback(sCallbackEnv, __FUNCTION__);
++    sCallbackEnv->DeleteLocalRef(addr);
++}
++
+ static btav_callbacks_t sBluetoothA2dpCallbacks = {
+     sizeof(sBluetoothA2dpCallbacks),
+     bta2dp_connection_state_callback,
+     bta2dp_audio_state_callback,
+     NULL, /* audio_config_cb */
++    bta2dp_connection_priority_callback,
+ };
+ 
+ static void classInitNative(JNIEnv* env, jclass clazz) {
+@@ -107,6 +139,9 @@ static void classInitNative(JNIEnv* env, jclass clazz) {
+     method_onAudioStateChanged =
+         env->GetMethodID(clazz, "onAudioStateChanged", "(I[B)V");
+ 
++    method_onCheckConnectionPriority =
++        env->GetMethodID(clazz, "onCheckConnectionPriority", "([B)V");
++
+     ALOGI("%s: succeeds", __FUNCTION__);
+ }
+ 
+@@ -142,7 +177,8 @@ static void initNative(JNIEnv *env, jobject object) {
+         return;
+     }
+ 
+-    if ( (status = sBluetoothA2dpInterface->init(&sBluetoothA2dpCallbacks)) != BT_STATUS_SUCCESS) {
++// TBD for LEA.1.0 added extra parameter
++    if ( (status = sBluetoothA2dpInterface->init(&sBluetoothA2dpCallbacks, 1, 0, NULL)) != BT_STATUS_SUCCESS) {
+         ALOGE("Failed to initialize Bluetooth A2DP, status: %d", status);
+         sBluetoothA2dpInterface = NULL;
+         return;
+@@ -209,12 +245,33 @@ static jboolean disconnectA2dpNative(JNIEnv *env, jobject object, jbyteArray add
+     return (status == BT_STATUS_SUCCESS) ? JNI_TRUE : JNI_FALSE;
+ }
+ 
++static void allowConnectionNative(JNIEnv *env, jobject object, int is_valid, jbyteArray address) {
++
++    jbyte *addr;
++    if (!sBluetoothA2dpInterface) {
++        ALOGE("sBluetoothA2dpInterface is NULL ");
++        return;
++    }
++
++    addr = env->GetByteArrayElements(address, NULL);
++
++    if (!addr) {
++        jniThrowIOException(env, EINVAL);
++        return ;
++    }
++
++    sBluetoothA2dpInterface->allow_connection(is_valid, (bt_bdaddr_t *)addr);
++    env->ReleaseByteArrayElements(address, addr, 0);
++}
++
++
+ static JNINativeMethod sMethods[] = {
+     {"classInitNative", "()V", (void *) classInitNative},
+     {"initNative", "()V", (void *) initNative},
+     {"cleanupNative", "()V", (void *) cleanupNative},
+     {"connectA2dpNative", "([B)Z", (void *) connectA2dpNative},
+     {"disconnectA2dpNative", "([B)Z", (void *) disconnectA2dpNative},
++    {"allowConnectionNative", "(I[B)V", (void *) allowConnectionNative},
+ };
+ 
+ int register_com_android_bluetooth_a2dp(JNIEnv* env)
+diff --git a/jni/com_android_bluetooth_a2dp_sink.cpp b/jni/com_android_bluetooth_a2dp_sink.cpp
+index 82110d3..5f60617 100644
+--- a/jni/com_android_bluetooth_a2dp_sink.cpp
++++ b/jni/com_android_bluetooth_a2dp_sink.cpp
+@@ -1,4 +1,12 @@
+ /*
++ * Copyright (c) 2017 Qualcomm Technologies, Inc.
++ * All Rights Reserved.
++ * Confidential and Proprietary - Qualcomm Technologies, Inc.
++ *
++ * NOT A CONTRIBUTION
++ * Apache license notifications and license are retained
++ * for attribution purposes only.
++ *
+  * Copyright (C) 2012 The Android Open Source Project
+  *
+  * Licensed under the Apache License, Version 2.0 (the "License");
+@@ -163,7 +171,8 @@ static void initNative(JNIEnv *env, jobject object) {
+         return;
+     }
+ 
+-    if ( (status = sBluetoothA2dpInterface->init(&sBluetoothA2dpCallbacks)) != BT_STATUS_SUCCESS) {
++// TBD for LEA.1.0 added extra parameter
++    if ( (status = sBluetoothA2dpInterface->init(&sBluetoothA2dpCallbacks, 1, 0, NULL)) != BT_STATUS_SUCCESS) {
+         ALOGE("Failed to initialize Bluetooth A2DP Sink, status: %d", status);
+         sBluetoothA2dpInterface = NULL;
+         return;
+diff --git a/jni/com_android_bluetooth_avrcp.cpp b/jni/com_android_bluetooth_avrcp.cpp
+index ba1d78b..32ed1c7 100644
+--- a/jni/com_android_bluetooth_avrcp.cpp
++++ b/jni/com_android_bluetooth_avrcp.cpp
+@@ -1,4 +1,12 @@
+ /*
++ * Copyright (c) 2017 Qualcomm Technologies, Inc.
++ * All Rights Reserved.
++ * Confidential and Proprietary - Qualcomm Technologies, Inc.
++ *
++ * NOT A CONTRIBUTION
++ * Apache license notifications and license are retained
++ * for attribution purposes only.
++ *
+  * Copyright (C) 2012 The Android Open Source Project
+  *
+  * Licensed under the Apache License, Version 2.0 (the "License");
+@@ -75,24 +83,39 @@ static void btavrcp_remote_features_callback(bt_bdaddr_t* bd_addr, btrc_remote_f
+     sCallbackEnv->DeleteLocalRef(addr);
+ }
+ 
+-static void btavrcp_get_play_status_callback() {
++// TBD for LEA.1.0 added extra parameter
++static void btavrcp_get_play_status_callback(bt_bdaddr_t* bd_addr) {
+     ALOGI("%s", __FUNCTION__);
++    jbyteArray addr;
+ 
+     if (!checkCallbackThread()) {
+         ALOGE("Callback: '%s' is not called on the correct thread", __FUNCTION__);
+         return;
+     }
+ 
++    addr = sCallbackEnv->NewByteArray(sizeof(bt_bdaddr_t));
++    if (!addr) {
++        ALOGE("Fail to new jbyteArray bd addr for get play status");
++        checkAndClearExceptionFromCallback(sCallbackEnv, __FUNCTION__);
++        return;
++    }
++    sCallbackEnv->SetByteArrayRegion(addr, 0, sizeof(bt_bdaddr_t), (jbyte*) bd_addr);
++
+     if (mCallbacksObj) {
+-        sCallbackEnv->CallVoidMethod(mCallbacksObj, method_getPlayStatus);
++        sCallbackEnv->CallVoidMethod(mCallbacksObj, method_getPlayStatus,addr);
+     } else {
+         ALOGE("%s: mCallbacksObj is null", __FUNCTION__);
+     }
+     checkAndClearExceptionFromCallback(sCallbackEnv, __FUNCTION__);
++    sCallbackEnv->DeleteLocalRef(addr);
+ }
+ 
+-static void btavrcp_get_element_attr_callback(uint8_t num_attr, btrc_media_attr_t *p_attrs) {
++// TBD for LEA.1.0 added extra parameter
++//static void btavrcp_get_element_attr_callback(uint8_t num_attr, btrc_media_attr_t *p_attrs) {
++static void btavrcp_get_element_attr_callback(uint8_t num_attr, btrc_media_attr_t *p_attrs,
++                                              bt_bdaddr_t* bd_addr) {
+     jintArray attrs;
++    jbyteArray addr;
+ 
+     ALOGI("%s", __FUNCTION__);
+ 
+@@ -100,6 +123,15 @@ static void btavrcp_get_element_attr_callback(uint8_t num_attr, btrc_media_attr_
+         ALOGE("Callback: '%s' is not called on the correct thread", __FUNCTION__);
+         return;
+     }
++
++    addr = sCallbackEnv->NewByteArray(sizeof(bt_bdaddr_t));
++    if (!addr) {
++        ALOGE("Fail to new jbyteArray bd addr for element attr");
++        checkAndClearExceptionFromCallback(sCallbackEnv, __FUNCTION__);
++        return;
++    }
++    sCallbackEnv->SetByteArrayRegion(addr, 0, sizeof(bt_bdaddr_t), (jbyte*) bd_addr);
++
+     attrs = (jintArray)sCallbackEnv->NewIntArray(num_attr);
+     if (!attrs) {
+         ALOGE("Fail to new jintArray for attrs");
+@@ -108,59 +140,105 @@ static void btavrcp_get_element_attr_callback(uint8_t num_attr, btrc_media_attr_
+     }
+     sCallbackEnv->SetIntArrayRegion(attrs, 0, num_attr, (jint *)p_attrs);
+     if (mCallbacksObj) {
+-        sCallbackEnv->CallVoidMethod(mCallbacksObj, method_getElementAttr, (jbyte)num_attr, attrs);
++        sCallbackEnv->CallVoidMethod(mCallbacksObj, method_getElementAttr, (jbyte)num_attr, attrs,addr);
+     } else {
+         ALOGE("%s: mCallbacksObj is null", __FUNCTION__);
+     }
+     checkAndClearExceptionFromCallback(sCallbackEnv, __FUNCTION__);
+     sCallbackEnv->DeleteLocalRef(attrs);
++    sCallbackEnv->DeleteLocalRef(addr);
+ }
+ 
+-static void btavrcp_register_notification_callback(btrc_event_id_t event_id, uint32_t param) {
++// TBD for LEA.1.0 added extra parameter
++//static void btavrcp_register_notification_callback(btrc_event_id_t event_id, uint32_t param) {
++static void btavrcp_register_notification_callback(btrc_event_id_t event_id, uint32_t param,
++                                                   bt_bdaddr_t* bd_addr) {
++
++    jbyteArray addr;
++    ALOGI("%s", __FUNCTION__);
++
+     if (!checkCallbackThread()) {
+         ALOGE("Callback: '%s' is not called on the correct thread", __FUNCTION__);
+         return;
+     }
++
++    addr = sCallbackEnv->NewByteArray(sizeof(bt_bdaddr_t));
++    if (!addr) {
++        ALOGE("Fail to new jbyteArray bd addr for register notification");
++        checkAndClearExceptionFromCallback(sCallbackEnv, __FUNCTION__);
++        return;
++    }
++    sCallbackEnv->SetByteArrayRegion(addr, 0, sizeof(bt_bdaddr_t), (jbyte*) bd_addr);
++
+     if (mCallbacksObj) {
+         sCallbackEnv->CallVoidMethod(mCallbacksObj, method_registerNotification,
+-                                 (jint)event_id, (jint)param);
++                                 (jint)event_id, (jint)param,addr);
+     } else {
+         ALOGE("%s: mCallbacksObj is null", __FUNCTION__);
+     }
+     checkAndClearExceptionFromCallback(sCallbackEnv, __FUNCTION__);
++    sCallbackEnv->DeleteLocalRef(addr);
+ }
+ 
+-static void btavrcp_volume_change_callback(uint8_t volume, uint8_t ctype) {
++// TBD for LEA.1.0 added extra parameter
++//static void btavrcp_volume_change_callback(uint8_t volume, uint8_t ctype) {
++static void btavrcp_volume_change_callback(uint8_t volume, uint8_t ctype, bt_bdaddr_t* bd_addr) {
++
++    jbyteArray addr;
+     ALOGI("%s", __FUNCTION__);
+ 
+     if (!checkCallbackThread()) {
+         ALOGE("Callback: '%s' is not called on the correct thread", __FUNCTION__);
+         return;
+     }
++
++    addr = sCallbackEnv->NewByteArray(sizeof(bt_bdaddr_t));
++    if (!addr) {
++        ALOGE("Fail to new jbyteArray bd addr for volume change");
++        checkAndClearExceptionFromCallback(sCallbackEnv, __FUNCTION__);
++        return;
++    }
++    sCallbackEnv->SetByteArrayRegion(addr, 0, sizeof(bt_bdaddr_t), (jbyte*) bd_addr);
++
+     if (mCallbacksObj) {
+         sCallbackEnv->CallVoidMethod(mCallbacksObj, method_volumeChangeCallback, (jint)volume,
+-                                                     (jint)ctype);
++                                                     (jint)ctype,addr);
+     } else {
+         ALOGE("%s: mCallbacksObj is null", __FUNCTION__);
+     }
+ 
+     checkAndClearExceptionFromCallback(sCallbackEnv, __FUNCTION__);
++    sCallbackEnv->DeleteLocalRef(addr);
+ }
+ 
+-static void btavrcp_passthrough_command_callback(int id, int pressed) {
++// TBD for LEA.1.0 added extra parameter
++//static void btavrcp_passthrough_command_callback(int id, int pressed) {
++static void btavrcp_passthrough_command_callback(int id, int pressed , bt_bdaddr_t* bd_addr) {
++
++    jbyteArray addr;
+     ALOGI("%s", __FUNCTION__);
+ 
+     if (!checkCallbackThread()) {
+         ALOGE("Callback: '%s' is not called on the correct thread", __FUNCTION__);
+         return;
+     }
++
++    addr = sCallbackEnv->NewByteArray(sizeof(bt_bdaddr_t));
++    if (!addr) {
++        ALOGE("Fail to new jbyteArray bd addr for passthrough command");
++        checkAndClearExceptionFromCallback(sCallbackEnv, __FUNCTION__);
++        return;
++    }
++    sCallbackEnv->SetByteArrayRegion(addr, 0, sizeof(bt_bdaddr_t), (jbyte*) bd_addr);
++
+     if (mCallbacksObj) {
+         sCallbackEnv->CallVoidMethod(mCallbacksObj, method_handlePassthroughCmd,
+-                      (jint)id, (jint)pressed);
++                      (jint)id, (jint)pressed,addr);
+     } else {
+         ALOGE("%s: mCallbacksObj is null", __FUNCTION__);
+     }
+     checkAndClearExceptionFromCallback(sCallbackEnv, __FUNCTION__);
++    sCallbackEnv->DeleteLocalRef(addr);
+ }
+ 
+ static btrc_callbacks_t sBluetoothAvrcpCallbacks = {
+@@ -177,25 +255,33 @@ static btrc_callbacks_t sBluetoothAvrcpCallbacks = {
+     btavrcp_register_notification_callback,
+     btavrcp_volume_change_callback,
+     btavrcp_passthrough_command_callback,
++    NULL,
++    NULL,
++    NULL,
++    NULL,
++    NULL,
++    NULL,
++    NULL,
++    NULL,
+ };
+ 
+ static void classInitNative(JNIEnv* env, jclass clazz) {
+     method_getRcFeatures =
+         env->GetMethodID(clazz, "getRcFeatures", "([BI)V");
+     method_getPlayStatus =
+-        env->GetMethodID(clazz, "getPlayStatus", "()V");
++        env->GetMethodID(clazz, "getPlayStatus", "([B)V");
+ 
+     method_getElementAttr =
+-        env->GetMethodID(clazz, "getElementAttr", "(B[I)V");
++        env->GetMethodID(clazz, "getElementAttr", "(B[I[B)V");
+ 
+     method_registerNotification =
+-        env->GetMethodID(clazz, "registerNotification", "(II)V");
++        env->GetMethodID(clazz, "registerNotification", "(II[B)V");
+ 
+     method_volumeChangeCallback =
+-        env->GetMethodID(clazz, "volumeChangeCallback", "(II)V");
++        env->GetMethodID(clazz, "volumeChangeCallback", "(II[B)V");
+ 
+     method_handlePassthroughCmd =
+-        env->GetMethodID(clazz, "handlePassthroughCmd", "(II)V");
++        env->GetMethodID(clazz, "handlePassthroughCmd", "(II[B)V");
+ 
+     ALOGI("%s: succeeds", __FUNCTION__);
+ }
+@@ -227,7 +313,8 @@ static void initNative(JNIEnv *env, jobject object) {
+         return;
+     }
+ 
+-    if ( (status = sBluetoothAvrcpInterface->init(&sBluetoothAvrcpCallbacks)) !=
++// TBD for LEA.1.0 added extra parameter
++    if ( (status = sBluetoothAvrcpInterface->init(&sBluetoothAvrcpCallbacks, 1)) !=
+          BT_STATUS_SUCCESS) {
+         ALOGE("Failed to initialize Bluetooth Avrcp, status: %d", status);
+         sBluetoothAvrcpInterface = NULL;
+@@ -257,24 +344,35 @@ static void cleanupNative(JNIEnv *env, jobject object) {
+ }
+ 
+ static jboolean getPlayStatusRspNative(JNIEnv *env, jobject object, jint playStatus,
+-                                       jint songLen, jint songPos) {
++                                       jint songLen, jint songPos, jbyteArray address) {
+     bt_status_t status;
++    jbyte *addr;
+ 
+     ALOGI("%s: sBluetoothAvrcpInterface: %p", __FUNCTION__, sBluetoothAvrcpInterface);
+     if (!sBluetoothAvrcpInterface) return JNI_FALSE;
+ 
++    addr = env->GetByteArrayElements(address, NULL);
++    if (!addr) {
++        jniThrowIOException(env, EINVAL);
++        return JNI_FALSE;
++    }
++
+     if ((status = sBluetoothAvrcpInterface->get_play_status_rsp((btrc_play_status_t)playStatus,
+-                                            songLen, songPos)) != BT_STATUS_SUCCESS) {
++                                            songLen, songPos,
++                                              (bt_bdaddr_t *)addr)) != BT_STATUS_SUCCESS) {
++
+         ALOGE("Failed get_play_status_rsp, status: %d", status);
+     }
+-
++    env->ReleaseByteArrayElements(address, addr, 0);
+     return (status == BT_STATUS_SUCCESS) ? JNI_TRUE : JNI_FALSE;
+ }
+ 
+   static jboolean getElementAttrRspNative(JNIEnv *env, jobject object, jbyte numAttr,
+-                                          jintArray attrIds, jobjectArray textArray) {
++                                          jintArray attrIds, jobjectArray textArray,
++                                          jbyteArray address) {
+     jint *attr;
+     bt_status_t status;
++    jbyte *addr;
+     jstring text;
+     int i;
+     btrc_element_attr_val_t *pAttrs = NULL;
+@@ -282,6 +380,12 @@ static jboolean getPlayStatusRspNative(JNIEnv *env, jobject object, jint playSta
+ 
+     if (!sBluetoothAvrcpInterface) return JNI_FALSE;
+ 
++    addr = env->GetByteArrayElements(address, NULL);
++    if (!addr) {
++        jniThrowIOException(env, EINVAL);
++        return JNI_FALSE;
++    }
++
+     if (numAttr > BTRC_MAX_ELEM_ATTR_SIZE) {
+         ALOGE("get_element_attr_rsp: number of attributes exceed maximum");
+         return JNI_FALSE;
+@@ -327,36 +431,49 @@ static jboolean getPlayStatusRspNative(JNIEnv *env, jobject object, jint playSta
+         return JNI_FALSE;
+     }
+ 
+-    if ((status = sBluetoothAvrcpInterface->get_element_attr_rsp(numAttr, pAttrs)) !=
+-        BT_STATUS_SUCCESS) {
++    if ((status = sBluetoothAvrcpInterface->get_element_attr_rsp(numAttr, pAttrs,
++                                            (bt_bdaddr_t *)addr)) != BT_STATUS_SUCCESS) {
+         ALOGE("Failed get_element_attr_rsp, status: %d", status);
+     }
+ 
+     delete[] pAttrs;
+     env->ReleaseIntArrayElements(attrIds, attr, 0);
++    env->ReleaseByteArrayElements(address, addr, 0);
+     return (status == BT_STATUS_SUCCESS) ? JNI_TRUE : JNI_FALSE;
+ }
+ 
+ static jboolean registerNotificationRspPlayStatusNative(JNIEnv *env, jobject object,
+-                                                        jint type, jint playStatus) {
++                                                        jint type, jint playStatus,
++                                                        jbyteArray address) {
+     bt_status_t status;
++    jbyte *addr;
+     btrc_register_notification_t param;
+ 
+     ALOGI("%s: sBluetoothAvrcpInterface: %p", __FUNCTION__, sBluetoothAvrcpInterface);
+     if (!sBluetoothAvrcpInterface) return JNI_FALSE;
+ 
++    addr = env->GetByteArrayElements(address, NULL);
++    if (!addr) {
++        jniThrowIOException(env, EINVAL);
++        return JNI_FALSE;
++    }
++
+     param.play_status = (btrc_play_status_t)playStatus;
+-    if ((status = sBluetoothAvrcpInterface->register_notification_rsp(BTRC_EVT_PLAY_STATUS_CHANGED,
+-                  (btrc_notification_type_t)type, &param)) != BT_STATUS_SUCCESS) {
++    if ((status = sBluetoothAvrcpInterface->register_notification_rsp(
++                  BTRC_EVT_PLAY_STATUS_CHANGED,
++                  (btrc_notification_type_t)type, &param, (bt_bdaddr_t *)addr))!=
++                  BT_STATUS_SUCCESS) {
+         ALOGE("Failed register_notification_rsp play status, status: %d", status);
+     }
+-
++    env->ReleaseByteArrayElements(address, addr, 0);
+     return (status == BT_STATUS_SUCCESS) ? JNI_TRUE : JNI_FALSE;
+ }
+ 
+ static jboolean registerNotificationRspTrackChangeNative(JNIEnv *env, jobject object,
+-                                                         jint type, jbyteArray track) {
++                                                         jint type, jbyteArray track,
++                                                         jbyteArray address) {
+     bt_status_t status;
++    jbyte *addr;
+     btrc_register_notification_t param;
+     jbyte *trk;
+     int i;
+@@ -364,6 +481,12 @@ static jboolean registerNotificationRspTrackChangeNative(JNIEnv *env, jobject ob
+     ALOGI("%s: sBluetoothAvrcpInterface: %p", __FUNCTION__, sBluetoothAvrcpInterface);
+     if (!sBluetoothAvrcpInterface) return JNI_FALSE;
+ 
++    addr = env->GetByteArrayElements(address, NULL);
++    if (!addr) {
++        jniThrowIOException(env, EINVAL);
++        return JNI_FALSE;
++    }
++
+     trk = env->GetByteArrayElements(track, NULL);
+     if (!trk) {
+         jniThrowIOException(env, EINVAL);
+@@ -375,32 +498,44 @@ static jboolean registerNotificationRspTrackChangeNative(JNIEnv *env, jobject ob
+     }
+ 
+     if ((status = sBluetoothAvrcpInterface->register_notification_rsp(BTRC_EVT_TRACK_CHANGE,
+-                  (btrc_notification_type_t)type, &param)) != BT_STATUS_SUCCESS) {
++                  (btrc_notification_type_t)type, &param, (bt_bdaddr_t *)addr)) != BT_STATUS_SUCCESS) {
+         ALOGE("Failed register_notification_rsp track change, status: %d", status);
+     }
+ 
+     env->ReleaseByteArrayElements(track, trk, 0);
++    env->ReleaseByteArrayElements(address, addr, 0);
+     return (status == BT_STATUS_SUCCESS) ? JNI_TRUE : JNI_FALSE;
+ }
+ 
+ static jboolean registerNotificationRspPlayPosNative(JNIEnv *env, jobject object,
+-                                                        jint type, jint playPos) {
++                                                        jint type, jint playPos,
++                                                        jbyteArray address) {
+     bt_status_t status;
++    jbyte *addr;
+     btrc_register_notification_t param;
+ 
+     if (!sBluetoothAvrcpInterface) return JNI_FALSE;
+ 
++    addr = env->GetByteArrayElements(address, NULL);
++    if (!addr) {
++        jniThrowIOException(env, EINVAL);
++        return JNI_FALSE;
++    }
++
+     param.song_pos = (uint32_t)playPos;
++
+     if ((status = sBluetoothAvrcpInterface->register_notification_rsp(BTRC_EVT_PLAY_POS_CHANGED,
+-                  (btrc_notification_type_t)type, &param)) != BT_STATUS_SUCCESS) {
++                  (btrc_notification_type_t)type, &param, (bt_bdaddr_t *)addr)) != BT_STATUS_SUCCESS) {
+         ALOGE("Failed register_notification_rsp play position, status: %d", status);
+     }
+-
++    env->ReleaseByteArrayElements(address, addr, 0);
+     return (status == BT_STATUS_SUCCESS) ? JNI_TRUE : JNI_FALSE;
+ }
+ 
+-static jboolean setVolumeNative(JNIEnv *env, jobject object, jint volume) {
++static jboolean setVolumeNative(JNIEnv *env, jobject object, jint volume,
++                                jbyteArray address) {
+     bt_status_t status;
++    jbyte *addr;
+ 
+     //TODO: delete test code
+     ALOGI("%s: jint: %d, uint8_t: %u", __FUNCTION__, volume, (uint8_t) volume);
+@@ -408,10 +543,17 @@ static jboolean setVolumeNative(JNIEnv *env, jobject object, jint volume) {
+     ALOGI("%s: sBluetoothAvrcpInterface: %p", __FUNCTION__, sBluetoothAvrcpInterface);
+     if (!sBluetoothAvrcpInterface) return JNI_FALSE;
+ 
+-    if ((status = sBluetoothAvrcpInterface->set_volume((uint8_t)volume)) != BT_STATUS_SUCCESS) {
+-        ALOGE("Failed set_volume, status: %d", status);
++    addr = env->GetByteArrayElements(address, NULL);
++    if (!addr) {
++        jniThrowIOException(env, EINVAL);
++        return JNI_FALSE;
+     }
+ 
++    if ((status = sBluetoothAvrcpInterface->set_volume((uint8_t)volume,
++                                      (bt_bdaddr_t *)addr)) != BT_STATUS_SUCCESS) {
++        ALOGE("Failed set_volume, status: %d", status);
++    }
++    env->ReleaseByteArrayElements(address, addr, 0);
+     return (status == BT_STATUS_SUCCESS) ? JNI_TRUE : JNI_FALSE;
+ }
+ 
+@@ -419,15 +561,15 @@ static JNINativeMethod sMethods[] = {
+     {"classInitNative", "()V", (void *) classInitNative},
+     {"initNative", "()V", (void *) initNative},
+     {"cleanupNative", "()V", (void *) cleanupNative},
+-    {"getPlayStatusRspNative", "(III)Z", (void *) getPlayStatusRspNative},
+-    {"getElementAttrRspNative", "(B[I[Ljava/lang/String;)Z", (void *) getElementAttrRspNative},
+-    {"registerNotificationRspPlayStatusNative", "(II)Z",
++    {"getPlayStatusRspNative", "(III[B)Z", (void *) getPlayStatusRspNative},
++    {"getElementAttrRspNative", "(B[I[Ljava/lang/String;[B)Z", (void *) getElementAttrRspNative},
++    {"registerNotificationRspPlayStatusNative", "(II[B)Z",
+      (void *) registerNotificationRspPlayStatusNative},
+-    {"registerNotificationRspTrackChangeNative", "(I[B)Z",
++    {"registerNotificationRspTrackChangeNative", "(I[B[B)Z",
+      (void *) registerNotificationRspTrackChangeNative},
+-    {"registerNotificationRspPlayPosNative", "(II)Z",
++    {"registerNotificationRspPlayPosNative", "(II[B)Z",
+      (void *) registerNotificationRspPlayPosNative},
+-    {"setVolumeNative", "(I)Z",
++    {"setVolumeNative", "(I[B)Z",
+      (void *) setVolumeNative},
+ };
+ 
+diff --git a/jni/com_android_bluetooth_avrcp_controller.cpp b/jni/com_android_bluetooth_avrcp_controller.cpp
+index 2c07a57..312e268 100644
+--- a/jni/com_android_bluetooth_avrcp_controller.cpp
++++ b/jni/com_android_bluetooth_avrcp_controller.cpp
+@@ -1,4 +1,12 @@
+ /*
++ * Copyright (c) 2017 Qualcomm Technologies, Inc.
++ * All Rights Reserved.
++ * Confidential and Proprietary - Qualcomm Technologies, Inc.
++ *
++ * NOT A CONTRIBUTION
++ * Apache license notifications and license are retained
++ * for attribution purposes only.
++ *
+  * Copyright (C) 2012 The Android Open Source Project
+  *
+  * Licensed under the Apache License, Version 2.0 (the "License");
+@@ -376,8 +384,9 @@ static void btavrcp_track_changed_callback(bt_bdaddr_t *bd_addr, uint8_t num_att
+     sCallbackEnv->DeleteLocalRef(strclazz);
+ }
+ 
++// TBD for LEA.1.0 added param play_status
+ static void btavrcp_play_position_changed_callback(bt_bdaddr_t *bd_addr, uint32_t song_len,
+-        uint32_t song_pos) {
++        uint32_t song_pos, btrc_play_status_t play_status) {
+ 
+     jbyteArray addr;
+     ALOGI("%s", __FUNCTION__);
+diff --git a/jni/com_android_bluetooth_btservice_AdapterService.cpp b/jni/com_android_bluetooth_btservice_AdapterService.cpp
+old mode 100755
+new mode 100644
+index 278f4a3..8a3e1cd
+--- a/jni/com_android_bluetooth_btservice_AdapterService.cpp
++++ b/jni/com_android_bluetooth_btservice_AdapterService.cpp
+@@ -1,4 +1,12 @@
+ /*
++ * Copyright (c) 2017 Qualcomm Technologies, Inc.
++ * All Rights Reserved.
++ * Confidential and Proprietary - Qualcomm Technologies, Inc.
++ *
++ * NOT A CONTRIBUTION
++ * Apache license notifications and license are retained
++ * for attribution purposes only.
++ *
+  * Copyright (C) 2012 The Android Open Source Project
+  *
+  * Licensed under the Apache License, Version 2.0 (the "License");
+@@ -1324,6 +1332,23 @@ static void interopDatabaseAddNative(JNIEnv *env, jobject obj, int feature,
+     env->ReleaseByteArrayElements(address, addr, 0);
+ }
+ 
++   //Unified Wake up feature ++
++static jboolean unifiedWakeUpSleepIndNative(JNIEnv* env, jobject obj, jboolean isSleep) {
++    ALOGV("%s:",__FUNCTION__);
++
++    jboolean result = JNI_FALSE;
++    int ret = BT_STATUS_FAIL;
++
++    if (!sBluetoothInterface) return result;
++
++    if(sBluetoothInterface->unified_wakeup_sleep_ind != NULL)
++        ret = sBluetoothInterface->unified_wakeup_sleep_ind(isSleep);
++
++    result = (ret == BT_STATUS_SUCCESS) ? JNI_TRUE : JNI_FALSE;
++    return result;
++}
++   //Unified Wake up feature --
++
+ static JNINativeMethod sMethods[] = {
+     /* name, signature, funcPtr */
+     {"classInitNative", "()V", (void *) classInitNative},
+@@ -1355,7 +1380,10 @@ static JNINativeMethod sMethods[] = {
+     {"dumpNative", "(Ljava/io/FileDescriptor;[Ljava/lang/String;)V", (void*) dumpNative},
+     {"factoryResetNative", "()Z", (void*)factoryResetNative},
+     {"interopDatabaseClearNative", "()V", (void*) interopDatabaseClearNative},
+-    {"interopDatabaseAddNative", "(I[BI)V", (void*) interopDatabaseAddNative}
++    {"interopDatabaseAddNative", "(I[BI)V", (void*) interopDatabaseAddNative},
++    //Unified Wake up feature ++
++    {"unifiedWakeUpSleepIndNative", "(Z)Z", (void*) unifiedWakeUpSleepIndNative}
++    //Unified Wake up feature --
+ };
+ 
+ int register_com_android_bluetooth_btservice_AdapterService(JNIEnv* env)
+diff --git a/jni/com_android_bluetooth_hfp.cpp b/jni/com_android_bluetooth_hfp.cpp
+index 3b6c2ce..db7dd86 100644
+--- a/jni/com_android_bluetooth_hfp.cpp
++++ b/jni/com_android_bluetooth_hfp.cpp
+@@ -1,4 +1,12 @@
+ /*
++ * Copyright (c) 2017 Qualcomm Technologies, Inc.
++ * All Rights Reserved.
++ * Confidential and Proprietary - Qualcomm Technologies, Inc.
++ *
++ * NOT A CONTRIBUTION
++ * Apache license notifications and license are retained
++ * for attribution purposes only.
++ *
+  * Copyright (C) 2012 The Android Open Source Project
+  *
+  * Licensed under the Apache License, Version 2.0 (the "License");
+@@ -379,7 +387,9 @@ static void key_pressed_callback(bt_bdaddr_t* bd_addr) {
+     sCallbackEnv->DeleteLocalRef(addr);
+ }
+ 
+-static void at_bind_callback(char *at_string, bt_bdaddr_t *bd_addr) {
++// TODO for LEA.1.0
++//static void at_bind_callback(char *at_string, bt_bdaddr_t *bd_addr) {
++static void at_bind_callback(char *at_string,bthf_bind_type_t type, bt_bdaddr_t *bd_addr) {
+     CHECK_CALLBACK_ENV
+ 
+     jbyteArray addr = marshall_bda(bd_addr);
+@@ -395,14 +405,16 @@ static void at_bind_callback(char *at_string, bt_bdaddr_t *bd_addr) {
+     sCallbackEnv->DeleteLocalRef(addr);
+ }
+ 
+-static void at_biev_callback(bthf_hf_ind_type_t ind_id, int ind_value, bt_bdaddr_t *bd_addr) {
++static void at_biev_callback(char* hf_ind_val, bt_bdaddr_t *bd_addr) {
+     CHECK_CALLBACK_ENV
+ 
+     jbyteArray addr = marshall_bda(bd_addr);
+     if (addr == NULL)
+         return;
+ 
+-    sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onAtBiev, ind_id, (jint)ind_value, addr);
++    // TODO for LEA.1.0
++    //sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onAtBiev,(jint)hf_ind_val, addr);
++    sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onAtBiev, 1, (jint)hf_ind_val, addr);
+     checkAndClearExceptionFromCallback(sCallbackEnv, __FUNCTION__);
+     sCallbackEnv->DeleteLocalRef(addr);
+ }
+@@ -425,9 +437,9 @@ static bthf_callbacks_t sBluetoothHfpCallbacks = {
+     at_cops_callback,
+     at_clcc_callback,
+     unknown_at_callback,
++    key_pressed_callback,
+     at_bind_callback,
+     at_biev_callback,
+-    key_pressed_callback
+ };
+ 
+ static void classInitNative(JNIEnv* env, jclass clazz) {
+@@ -712,6 +724,7 @@ static jboolean cindResponseNative(JNIEnv *env, jobject object,
+     return (status == BT_STATUS_SUCCESS) ? JNI_TRUE : JNI_FALSE;
+ }
+ 
++#if 0 // TODO for LEA.1.0
+ static jboolean bindResponseNative(JNIEnv *env,jobject object,
+                                 jint ind_id, jboolean ind_status,
+                                 jbyteArray address) {
+@@ -736,6 +749,28 @@ static jboolean bindResponseNative(JNIEnv *env,jobject object,
+     env->ReleaseByteArrayElements(address, addr, 0);
+     return (status == BT_STATUS_SUCCESS ? JNI_TRUE : JNI_FALSE);
+ }
++#endif
++
++static jboolean bindResponseNative(JNIEnv *env, jobject object, jint anum,
++                                    jboolean hf_ind_status, jbyteArray address) {
++    jbyte *addr;
++    bt_status_t status;
++
++    if (!sBluetoothHfpInterface) return JNI_FALSE;
++
++    addr = env->GetByteArrayElements(address, NULL);
++    if (!addr) {
++        jniThrowIOException(env, EINVAL);
++        return JNI_FALSE;
++    }
++    if ( (status = sBluetoothHfpInterface->bind_response(anum,
++            hf_ind_status ? BTHF_HF_INDICATOR_STATE_ENABLED: BTHF_HF_INDICATOR_STATE_DISABLED,
++            (bt_bdaddr_t *)addr)) != BT_STATUS_SUCCESS) {
++        ALOGE("Failed sending BIND response, status: %d", status);
++    }
++    env->ReleaseByteArrayElements(address, addr, 0);
++    return (status == BT_STATUS_SUCCESS) ? JNI_TRUE : JNI_FALSE;
++}
+ 
+ static jboolean atResponseStringNative(JNIEnv *env, jobject object, jstring response_str,
+                                                  jbyteArray address) {
+diff --git a/res/values/config.xml b/res/values/config.xml
+index 91f0c0f..8fef2a2 100644
+--- a/res/values/config.xml
++++ b/res/values/config.xml
+@@ -14,19 +14,19 @@
+ -->
+ <resources>
+     <bool name="profile_supported_a2dp">true</bool>
+-    <bool name="profile_supported_a2dp_sink">false</bool>
++    <bool name="profile_supported_a2dp_sink">true</bool>
+     <bool name="profile_supported_hdp">true</bool>
+-    <bool name="profile_supported_hs_hfp">true</bool>
++    <bool name="profile_supported_hs_hfp">false</bool>
+     <bool name="profile_supported_hfpclient">false</bool>
+     <bool name="profile_supported_hid">true</bool>
+-    <bool name="profile_supported_opp">true</bool>
+-    <bool name="profile_supported_pan">true</bool>
+-    <bool name="profile_supported_pbap">true</bool>
++    <bool name="profile_supported_opp">false</bool>
++    <bool name="profile_supported_pan">false</bool>
++    <bool name="profile_supported_pbap">false</bool>
+     <bool name="profile_supported_gatt">true</bool>
+-    <bool name="pbap_include_photos_in_vcard">true</bool>
+-    <bool name="pbap_use_profile_for_owner_vcard">true</bool>
+-    <bool name="profile_supported_map">true</bool>
+-    <bool name="profile_supported_avrcp_controller">false</bool>
++    <bool name="pbap_include_photos_in_vcard">false</bool>
++    <bool name="pbap_use_profile_for_owner_vcard">false</bool>
++    <bool name="profile_supported_map">false</bool>
++    <bool name="profile_supported_avrcp_controller">true</bool>
+     <bool name="profile_supported_sap">false</bool>
+     <bool name="profile_supported_pbapclient">false</bool>
+ 
+diff --git a/src/com/android/bluetooth/a2dp/A2dpService.java b/src/com/android/bluetooth/a2dp/A2dpService.java
+old mode 100755
+new mode 100644
+index 41c31d1..171a35f
+--- a/src/com/android/bluetooth/a2dp/A2dpService.java
++++ b/src/com/android/bluetooth/a2dp/A2dpService.java
+@@ -149,7 +149,7 @@ public class A2dpService extends ProfileService {
+         return true;
+     }
+ 
+-    boolean disconnect(BluetoothDevice device) {
++    public boolean disconnect(BluetoothDevice device) {
+         enforceCallingOrSelfPermission(BLUETOOTH_ADMIN_PERM,
+                                        "Need BLUETOOTH ADMIN permission");
+         int connectionState = mStateMachine.getConnectionState(device);
+@@ -172,7 +172,7 @@ public class A2dpService extends ProfileService {
+         return mStateMachine.getDevicesMatchingConnectionStates(states);
+     }
+ 
+-    int getConnectionState(BluetoothDevice device) {
++    public int getConnectionState(BluetoothDevice device) {
+         enforceCallingOrSelfPermission(BLUETOOTH_PERM, "Need BLUETOOTH permission");
+         return mStateMachine.getConnectionState(device);
+     }
+diff --git a/src/com/android/bluetooth/a2dp/A2dpStateMachine.java b/src/com/android/bluetooth/a2dp/A2dpStateMachine.java
+old mode 100755
+new mode 100644
+index 7ad4a59..f0aa771
+--- a/src/com/android/bluetooth/a2dp/A2dpStateMachine.java
++++ b/src/com/android/bluetooth/a2dp/A2dpStateMachine.java
+@@ -1,4 +1,12 @@
+ /*
++ * Copyright (c) 2017 Qualcomm Technologies, Inc.
++ * All Rights Reserved.
++ * Confidential and Proprietary - Qualcomm Technologies, Inc.
++ *
++ * NOT A CONTRIBUTION
++ * Apache license notifications and license are retained
++ * for attribution purposes only.
++ *
+  * Copyright (C) 2012 The Android Open Source Project
+  *
+  * Licensed under the Apache License, Version 2.0 (the "License");
+@@ -65,6 +73,9 @@ final class A2dpStateMachine extends StateMachine {
+     private static final int STACK_EVENT = 101;
+     private static final int CONNECT_TIMEOUT = 201;
+ 
++    private static final int IS_INVALID_DEVICE = 0;
++    private static final int IS_VALID_DEVICE = 1;
++
+     private Disconnected mDisconnected;
+     private Pending mPending;
+     private Connected mConnected;
+@@ -752,6 +763,21 @@ final class A2dpStateMachine extends StateMachine {
+         event.device = getDevice(address);
+         sendMessage(STACK_EVENT, event);
+     }
++
++    private void onCheckConnectionPriority(byte[] address) {
++        log("Enter onCheckConnectionPriority() ");
++        BluetoothDevice device = getDevice(address);
++        logw(" device " + device + " okToConnect " + okToConnect(device));
++        if (okToConnect(device)) {
++            // if connection is allowed then go ahead and connect
++            allowConnectionNative(IS_VALID_DEVICE, getByteAddress(device));
++        } else {
++            // if connection is not allowed DO NOT CONNECT
++            allowConnectionNative(IS_INVALID_DEVICE, getByteAddress(device));
++        }
++        log("Exit onCheckConnectionPriority() ");
++    }
++
+     private BluetoothDevice getDevice(byte[] address) {
+         return mAdapter.getRemoteDevice(Utils.getAddressStringFromByte(address));
+     }
+@@ -821,4 +847,5 @@ final class A2dpStateMachine extends StateMachine {
+     private native void cleanupNative();
+     private native boolean connectA2dpNative(byte[] address);
+     private native boolean disconnectA2dpNative(byte[] address);
++    private native void allowConnectionNative(int isValid, byte[] address);
+ }
+diff --git a/src/com/android/bluetooth/a2dpsink/A2dpSinkService.java b/src/com/android/bluetooth/a2dpsink/A2dpSinkService.java
+index 82d6d34..5fec0e2 100644
+--- a/src/com/android/bluetooth/a2dpsink/A2dpSinkService.java
++++ b/src/com/android/bluetooth/a2dpsink/A2dpSinkService.java
+@@ -130,7 +130,7 @@ public class A2dpSinkService extends ProfileService {
+         return true;
+     }
+ 
+-    boolean disconnect(BluetoothDevice device) {
++    public boolean disconnect(BluetoothDevice device) {
+         enforceCallingOrSelfPermission(BLUETOOTH_ADMIN_PERM,
+                                        "Need BLUETOOTH ADMIN permission");
+         int connectionState = mStateMachine.getConnectionState(device);
+@@ -153,7 +153,7 @@ public class A2dpSinkService extends ProfileService {
+         return mStateMachine.getDevicesMatchingConnectionStates(states);
+     }
+ 
+-    int getConnectionState(BluetoothDevice device) {
++    public int getConnectionState(BluetoothDevice device) {
+         enforceCallingOrSelfPermission(BLUETOOTH_PERM, "Need BLUETOOTH permission");
+         return mStateMachine.getConnectionState(device);
+     }
+diff --git a/src/com/android/bluetooth/a2dpsink/A2dpSinkStateMachine.java b/src/com/android/bluetooth/a2dpsink/A2dpSinkStateMachine.java
+index 07acd6f..5e8c71f 100644
+--- a/src/com/android/bluetooth/a2dpsink/A2dpSinkStateMachine.java
++++ b/src/com/android/bluetooth/a2dpsink/A2dpSinkStateMachine.java
+@@ -388,7 +388,7 @@ final class A2dpSinkStateMachine extends StateMachine {
+                         }
+                     } else if (mTargetDevice != null && mTargetDevice.equals(device)) {
+                         // outgoing connection failed
+-                        broadcastConnectionState(mTargetDevice, BluetoothProfile.STATE_CONNECTED,
++                        broadcastConnectionState(mTargetDevice, BluetoothProfile.STATE_DISCONNECTED,
+                                                  BluetoothProfile.STATE_CONNECTING);
+                         synchronized (A2dpSinkStateMachine.this) {
+                             mTargetDevice = null;
+diff --git a/src/com/android/bluetooth/avrcp/Avrcp.java b/src/com/android/bluetooth/avrcp/Avrcp.java
+old mode 100755
+new mode 100644
+index 57c98a8..25e1f3d
+--- a/src/com/android/bluetooth/avrcp/Avrcp.java
++++ b/src/com/android/bluetooth/avrcp/Avrcp.java
+@@ -1,4 +1,12 @@
+ /*
++ * Copyright (c) 2017 Qualcomm Technologies, Inc.
++ * All Rights Reserved.
++ * Confidential and Proprietary - Qualcomm Technologies, Inc.
++ *
++ * NOT A CONTRIBUTION
++ * Apache license notifications and license are retained
++ * for attribution purposes only.
++ *
+  * Copyright (C) 2012 The Android Open Source Project
+  *
+  * Licensed under the Apache License, Version 2.0 (the "License");
+@@ -305,15 +313,18 @@ public final class Avrcp {
+             case MESSAGE_GET_PLAY_STATUS:
+                 if (DEBUG) Log.v(TAG, "MESSAGE_GET_PLAY_STATUS");
+                 getPlayStatusRspNative(convertPlayStateToPlayStatus(mCurrentPlayState),
+-                                       (int)mSongLengthMs, (int)getPlayPosition());
++                                       (int)mSongLengthMs, (int)getPlayPosition(), Utils.getBytesFromAddress(mAddress));
+                 break;
+ 
+             case MESSAGE_GET_ELEM_ATTRS:
+                 String[] textArray;
+                 int[] attrIds;
+                 byte numAttr = (byte) msg.arg1;
+-                ArrayList<Integer> attrList = (ArrayList<Integer>) msg.obj;
+-                Log.v(TAG, "MESSAGE_GET_ELEM_ATTRS:numAttr=" + numAttr);
++                ItemAttr itemAttr = (ItemAttr)msg.obj;
++                Log.v(TAG, "event for device address " + itemAttr.mAddress);
++                ArrayList<Integer> attrList = itemAttr.mAttrList;
++                if (DEBUG)
++                    Log.v(TAG, "MESSAGE_GET_ELEM_ATTRS:numAttr=" + numAttr);
+                 attrIds = new int[numAttr];
+                 textArray = new String[numAttr];
+                 for (int i = 0; i < numAttr; ++i) {
+@@ -322,13 +333,14 @@ public final class Avrcp {
+                     Log.v(TAG, "getAttributeString:attrId=" + attrIds[i] +
+                                " str=" + textArray[i]);
+                 }
+-                getElementAttrRspNative(numAttr, attrIds, textArray);
++                getElementAttrRspNative(numAttr ,attrIds ,textArray ,
++                        Utils.getBytesFromAddress(itemAttr.mAddress));
+                 break;
+ 
+             case MESSAGE_REGISTER_NOTIFICATION:
+                 if (DEBUG) Log.v(TAG, "MESSAGE_REGISTER_NOTIFICATION:event=" + msg.arg1 +
+                                       " param=" + msg.arg2);
+-                processRegisterNotification(msg.arg1, msg.arg2);
++                processRegisterNotification(msg.arg1, msg.arg2, (String) msg.obj);
+                 break;
+ 
+             case MESSAGE_PLAY_INTERVAL_TIMEOUT:
+@@ -412,7 +424,7 @@ public final class Avrcp {
+                     if (DEBUG) Log.d(TAG, "Remote device didn't tune volume, let's try one more step.");
+                     int retry_volume = Math.min(AVRCP_MAX_VOL,
+                             Math.max(0, mLastRemoteVolume + mLastDirection));
+-                    if (setVolumeNative(retry_volume)) {
++                    if (setVolumeNative(retry_volume, Utils.getBytesFromAddress(mAddress))) {
+                         mLastRemoteVolume = retry_volume;
+                         sendMessageDelayed(obtainMessage(MESSAGE_ABS_VOL_TIMEOUT),
+                                            CMD_TIMEOUT_DELAY);
+@@ -478,8 +490,7 @@ public final class Avrcp {
+                                  convertToAvrcpVolume(Math.max(0, targetVolIndex)));
+                         if (DEBUG) Log.d(TAG, "set volume from local volume "+ targetVolIndex+"-"+ setVol);
+                     }
+-
+-                    if (setVolumeNative(setVol)) {
++                    if (setVolumeNative(setVol, Utils.getBytesFromAddress(mAddress))) {
+                         sendMessageDelayed(obtainMessage(MESSAGE_ABS_VOL_TIMEOUT),
+                                            CMD_TIMEOUT_DELAY);
+                         mVolCmdAdjustInProgress = true;
+@@ -517,7 +528,8 @@ public final class Avrcp {
+                 int avrcpVolume = convertToAvrcpVolume(msg.arg1);
+                 avrcpVolume = Math.min(AVRCP_MAX_VOL, Math.max(0, avrcpVolume));
+                 if (DEBUG) Log.d(TAG, "Setting volume to " + msg.arg1 + "-" + avrcpVolume);
+-                if (setVolumeNative(avrcpVolume)) {
++
++                if (setVolumeNative(avrcpVolume, Utils.getBytesFromAddress(mAddress))) {
+                     sendMessageDelayed(obtainMessage(MESSAGE_ABS_VOL_TIMEOUT), CMD_TIMEOUT_DELAY);
+                     mVolCmdSetInProgress = true;
+                     mLastRemoteVolume = avrcpVolume;
+@@ -537,7 +549,7 @@ public final class Avrcp {
+                     blackListCurrentDevice();
+                 } else {
+                     mAbsVolRetryTimes += 1;
+-                    if (setVolumeNative(mLastRemoteVolume)) {
++                    if (setVolumeNative(mLastRemoteVolume, Utils.getBytesFromAddress(mAddress))) {
+                         sendMessageDelayed(obtainMessage(MESSAGE_ABS_VOL_TIMEOUT),
+                                            CMD_TIMEOUT_DELAY);
+                         mVolCmdSetInProgress = true;
+@@ -658,7 +670,7 @@ public final class Avrcp {
+         if (mPlayStatusChangedNT == NOTIFICATION_TYPE_INTERIM &&
+             (oldPlayStatus != newPlayStatus)) {
+             mPlayStatusChangedNT = NOTIFICATION_TYPE_CHANGED;
+-            registerNotificationRspPlayStatusNative(mPlayStatusChangedNT, newPlayStatus);
++            registerNotificationRspPlayStatusNative(mPlayStatusChangedNT, newPlayStatus, Utils.getBytesFromAddress(mAddress));
+         }
+     }
+ 
+@@ -809,32 +821,52 @@ public final class Avrcp {
+         mHandler.sendMessage(msg);
+     }
+ 
+-    private void getPlayStatus() {
+-        Message msg = mHandler.obtainMessage(MESSAGE_GET_PLAY_STATUS);
++    private void getPlayStatus(byte[] address) {
++        Message msg = mHandler.obtainMessage(MESSAGE_GET_PLAY_STATUS, 0, 0,
++                Utils.getAddressStringFromByte(address));
+         mHandler.sendMessage(msg);
+     }
+ 
+-    private void getElementAttr(byte numAttr, int[] attrs) {
++    private void getElementAttr(byte numAttr, int[] attrs, byte[] address) {
+         int i;
+         ArrayList<Integer> attrList = new ArrayList<Integer>();
+         for (i = 0; i < numAttr; ++i) {
+             attrList.add(attrs[i]);
+         }
+-        Message msg = mHandler.obtainMessage(MESSAGE_GET_ELEM_ATTRS, numAttr, 0, attrList);
++        ItemAttr itemAttr = new ItemAttr(attrList, 0, 0,
++                Utils.getAddressStringFromByte(address));
++        Message msg = mHandler.obtainMessage(MESSAGE_GET_ELEM_ATTRS, (int)numAttr, 0,
++                itemAttr);
+         mHandler.sendMessage(msg);
+     }
+ 
+-    private void registerNotification(int eventId, int param) {
+-        Message msg = mHandler.obtainMessage(MESSAGE_REGISTER_NOTIFICATION, eventId, param);
++    private class ItemAttr {
++        ArrayList<Integer> mAttrList;
++        long mUid;
++        int mSize;
++        String mAddress;
++        public ItemAttr (ArrayList<Integer> attrList, long uid, int size,
++                String deviceAddress) {
++            mAttrList = attrList;
++            mUid = uid;
++            mSize = size;
++            mAddress = deviceAddress;
++        }
++    }
++
++    private void registerNotification(int eventId, int param, byte[] address) {
++        Message msg = mHandler.obtainMessage(MESSAGE_REGISTER_NOTIFICATION, eventId,
++                param, Utils.getAddressStringFromByte(address));
+         mHandler.sendMessage(msg);
+     }
+ 
+-    private void processRegisterNotification(int eventId, int param) {
++    private void processRegisterNotification(int eventId, int param,
++            String deviceAddress) {
+         switch (eventId) {
+             case EVT_PLAY_STATUS_CHANGED:
+                 mPlayStatusChangedNT = NOTIFICATION_TYPE_INTERIM;
+                 registerNotificationRspPlayStatusNative(mPlayStatusChangedNT,
+-                        convertPlayStateToPlayStatus(mCurrentPlayState));
++                        convertPlayStateToPlayStatus(mCurrentPlayState), Utils.getBytesFromAddress(deviceAddress));
+                 break;
+ 
+             case EVT_TRACK_CHANGED:
+@@ -851,7 +883,8 @@ public final class Avrcp {
+         }
+     }
+ 
+-    private void handlePassthroughCmd(int id, int keyState) {
++    private void handlePassthroughCmd(int id, int keyState,
++                 byte[] address) {
+         switch (id) {
+             case BluetoothAvrcp.PASSTHROUGH_ID_REWIND:
+                 rewind(keyState);
+@@ -900,7 +933,7 @@ public final class Avrcp {
+         for (int i = 0; i < TRACK_ID_SIZE; ++i) {
+             track[i] = (byte) (trackNumberRsp >> (56 - 8 * i));
+         }
+-        registerNotificationRspTrackChangeNative(mTrackChangedNT, track);
++        registerNotificationRspTrackChangeNative(mTrackChangedNT, track, Utils.getBytesFromAddress(mAddress));
+     }
+ 
+     private long getPlayPosition() {
+@@ -982,7 +1015,7 @@ public final class Avrcp {
+         if (requested || ((mLastReportedPosition != playPositionMs) &&
+               (playPositionMs >= mNextPosMs) || (playPositionMs <= mPrevPosMs))) {
+             if (!requested) mPlayPosChangedNT = NOTIFICATION_TYPE_CHANGED;
+-            registerNotificationRspPlayPosNative(mPlayPosChangedNT, (int)playPositionMs);
++            registerNotificationRspPlayPosNative(mPlayPosChangedNT, (int)playPositionMs, Utils.getBytesFromAddress(mAddress));
+             mLastReportedPosition = playPositionMs;
+             if (playPositionMs != PlaybackState.PLAYBACK_POSITION_UNKNOWN) {
+                 mNextPosMs = playPositionMs + mPlaybackIntervalMs;
+@@ -1040,8 +1073,9 @@ public final class Avrcp {
+      * This method will send a message to our handler to change the local stored volume and notify
+      * AudioService to update the UI
+      */
+-    private void volumeChangeCallback(int volume, int ctype) {
+-        Message msg = mHandler.obtainMessage(MESSAGE_VOLUME_CHANGED, volume, ctype);
++    private void volumeChangeCallback(int volume, int ctype, byte[] address) {
++        Message msg = mHandler.obtainMessage(MESSAGE_VOLUME_CHANGED, volume,
++                ctype, Utils.getAddressStringFromByte(address));
+         mHandler.sendMessage(msg);
+     }
+ 
+@@ -1167,12 +1201,12 @@ public final class Avrcp {
+     private native static void classInitNative();
+     private native void initNative();
+     private native void cleanupNative();
+-    private native boolean getPlayStatusRspNative(int playStatus, int songLen, int songPos);
+-    private native boolean getElementAttrRspNative(byte numAttr, int[] attrIds, String[] textArray);
+-    private native boolean registerNotificationRspPlayStatusNative(int type, int playStatus);
+-    private native boolean registerNotificationRspTrackChangeNative(int type, byte[] track);
+-    private native boolean registerNotificationRspPlayPosNative(int type, int playPos);
+-    private native boolean setVolumeNative(int volume);
++    private native boolean getPlayStatusRspNative(int playStatus, int songLen, int songPos, byte[] address);
++    private native boolean getElementAttrRspNative(byte numAttr, int[] attrIds, String[] textArray, byte[] address);
++    private native boolean registerNotificationRspPlayStatusNative(int type, int playStatus, byte[] address);
++    private native boolean registerNotificationRspTrackChangeNative(int type, byte[] track, byte[] address);
++    private native boolean registerNotificationRspPlayPosNative(int type, int playPos, byte[] address);
++    private native boolean setVolumeNative(int volume, byte[] address);
+     private native boolean sendPassThroughCommandNative(int keyCode, int keyState);
+ 
+ }
+diff --git a/src/com/android/bluetooth/avrcp/AvrcpControllerService.java b/src/com/android/bluetooth/avrcp/AvrcpControllerService.java
+index 313764e..96f9c44 100644
+--- a/src/com/android/bluetooth/avrcp/AvrcpControllerService.java
++++ b/src/com/android/bluetooth/avrcp/AvrcpControllerService.java
+@@ -19,6 +19,7 @@ package com.android.bluetooth.avrcp;
+ import android.bluetooth.BluetoothAdapter;
+ import android.bluetooth.BluetoothAvrcpController;
+ import android.bluetooth.BluetoothAvrcpPlayerSettings;
++import android.bluetooth.BluetoothAvrcpInfo;
+ import android.bluetooth.BluetoothDevice;
+ import android.bluetooth.BluetoothProfile;
+ import android.bluetooth.IBluetoothAvrcpController;
+@@ -323,6 +324,19 @@ public class AvrcpControllerService extends ProfileService {
+         enforceCallingOrSelfPermission(BLUETOOTH_PERM, "Need BLUETOOTH permission");
+         return getCurrentPlayerAppSetting();
+     }
++
++    public int getSupportedFeatures(BluetoothDevice device) {
++        if (!mConnectedDevices.contains(device)||(mAvrcpRemoteDevice == null)) {
++            Log.e(TAG," req Device " + device + " Internal List " + mConnectedDevices.get(0));
++            Log.e(TAG," remoteData " + mAvrcpRemoteDevice);
++            if (mAvrcpRemoteDevice != null)
++            Log.e(TAG," getSupportedFeatures returning  from here "+ mAvrcpRemoteDevice.mRemoteFeatures);
++            return 0;
++        }
++        Log.d(TAG," getSupportedFeatures returning " + mAvrcpRemoteDevice.mRemoteFeatures);
++        return mAvrcpRemoteDevice.mRemoteFeatures;
++    }
++
+     public boolean setPlayerApplicationSetting(BluetoothAvrcpPlayerSettings plAppSetting) {
+         if ((mAvrcpRemoteDevice == null)||(mRemoteMediaPlayers == null)) {
+             return false;
+@@ -430,6 +444,13 @@ public class AvrcpControllerService extends ProfileService {
+             service.sendPassThroughCmd(device, keyCode, keyState);
+         }
+ 
++        public int getSupportedFeatures(BluetoothDevice device) {
++            Log.v(TAG,"Binder Call: getSupportedFeatures Dev = " + device);
++            AvrcpControllerService service = getService();
++            if (service == null) return 0;
++            return service.getSupportedFeatures(device);
++        }
++
+         @Override
+         public void sendGroupNavigationCmd(BluetoothDevice device, int keyCode, int keyState) {
+             Log.v(TAG,"Binder Call: sendGroupNavigationCmd");
+@@ -560,10 +581,13 @@ public class AvrcpControllerService extends ProfileService {
+                 // Any messages hence forth about play pos/play status/song info will be sent.
+                 if(mRemoteMediaPlayers != null) {
+                     broadcastPlayBackStateChanged(getCurrentPlayBackState());
+-                    broadcastMetaDataChanged(
+-                        getCurrentMetaData(AvrcpControllerConstants.AVRCP_SCOPE_NOW_PLAYING, 0));
++                    if((mRemoteNowPlayingList != null) &&
++                       (mRemoteNowPlayingList.getCurrentTrack() != null)) {
++                        broadcastMetaDataChanged(
++                            getCurrentMetaData(AvrcpControllerConstants.AVRCP_SCOPE_NOW_PLAYING, 0));
++                        mBroadcastMetadata = true;
++                    }
+                 }
+-                mBroadcastMetadata = true;
+                 break;
+             case AvrcpControllerConstants.MESSAGE_SEND_PASS_THROUGH_CMD:
+                 BluetoothDevice device = (BluetoothDevice)msg.obj;
+diff --git a/src/com/android/bluetooth/btservice/AdapterProperties.java b/src/com/android/bluetooth/btservice/AdapterProperties.java
+index 049c594..6526b82 100644
+--- a/src/com/android/bluetooth/btservice/AdapterProperties.java
++++ b/src/com/android/bluetooth/btservice/AdapterProperties.java
+@@ -69,6 +69,8 @@ class AdapterProperties {
+     private boolean mIsExtendedScanSupported;
+     private boolean mIsDebugLogSupported;
+     private boolean mIsActivityAndEnergyReporting;
++    //Remote device with which DUT is in bonding process
++    private BluetoothDevice deviceInBondingProcess = null;
+ 
+     // Lock for all getters and setters.
+     // If finer grained locking is needer, more locks
+@@ -265,6 +267,10 @@ class AdapterProperties {
+         return bondedDeviceList;
+     }
+ 
++    public BluetoothDevice anyDeviceInBluetoothBondingState() {
++        return deviceInBondingProcess;
++    }
++
+     // This function shall be invoked from BondStateMachine whenever the bond
+     // state changes.
+     void onBondStateChanged(BluetoothDevice device, int state)
+@@ -278,12 +284,16 @@ class AdapterProperties {
+                 prop = mRemoteDevices.addDeviceProperties(addrByte);
+             prop.setBondState(state);
+ 
++            deviceInBondingProcess = null;
++
+             if (state == BluetoothDevice.BOND_BONDED) {
+                 // add if not already in list
+-                if(!mBondedDevices.contains(device)) {
+-                    debugLog("Adding bonded device:" +  device);
++                if (!mBondedDevices.contains(device)) {
++                    debugLog("Adding bonded device:" + device);
+                     mBondedDevices.add(device);
+                 }
++            } else if(state == BluetoothDevice.BOND_BONDING) {
++                deviceInBondingProcess = device;
+             } else if (state == BluetoothDevice.BOND_NONE) {
+                 // remove device from list
+                 if (mBondedDevices.remove(device))
+diff --git a/src/com/android/bluetooth/btservice/AdapterService.java b/src/com/android/bluetooth/btservice/AdapterService.java
+index 14901c6..ce12125 100644
+--- a/src/com/android/bluetooth/btservice/AdapterService.java
++++ b/src/com/android/bluetooth/btservice/AdapterService.java
+@@ -81,6 +81,8 @@ import java.util.HashMap;
+ import java.util.Map;
+ import java.util.Iterator;
+ import java.util.List;
++import java.util.concurrent.CopyOnWriteArrayList;
++import com.android.bluetooth.gatt.GattService;
+ 
+ import android.os.ServiceManager;
+ import com.android.internal.app.IBatteryStats;
+@@ -142,6 +144,9 @@ public class AdapterService extends Service {
+     };
+ 
+     private static final int CONTROLLER_ENERGY_UPDATE_TIMEOUT_MILLIS = 30;
++    private static boolean sleepInitiated = false;
++    private CopyOnWriteArrayList<BluetoothDevice> mDevicesToWaitForAcLDisconnection = new CopyOnWriteArrayList<BluetoothDevice>();
++    private BluetoothDevice bondingDevice;
+ 
+     static {
+         classInitNative();
+@@ -329,6 +334,88 @@ public class AdapterService extends Service {
+         }
+     }
+ 
++    private void disconnectAllActiveProfileConnections() {
++        boolean addToWaitACL;
++        int currentConnectionState;
++        A2dpService a2dpService = A2dpService.getA2dpService();
++        A2dpSinkService a2dpSinkService = A2dpSinkService.getA2dpSinkService();
++        HidService hidService = HidService.getHidService();
++        GattService gattService = GattService.getGattService();
++        BluetoothDevice bondedDevices[] = getBondedDevices();
++
++        debugLog("disconnectAllActiveProfileConnections");
++
++        mDevicesToWaitForAcLDisconnection.clear();
++
++//        gattService.disconnectAll();
++// RemoteDevice.java doesn't keep track of devices that were bonded outside Settings application i.e using 3rd party app
++//So we can't wait for acl disconnection
++
++        if (bondedDevices == null) {
++            return;
++        }
++
++        for (BluetoothDevice device : bondedDevices) {
++            addToWaitACL = false;
++            currentConnectionState = 0;
++
++            if (a2dpService != null) {
++                currentConnectionState = a2dpService.getConnectionState(device);
++                if (currentConnectionState == BluetoothProfile.STATE_CONNECTED ||
++                        currentConnectionState == BluetoothProfile.STATE_CONNECTING) {
++                    debugLog("disconnect a2dp source");
++                    a2dpService.disconnect(device);
++                    addToWaitACL = true;
++                }
++            }
++
++            if (a2dpSinkService != null) {
++                currentConnectionState = a2dpSinkService.getConnectionState(device);
++                if (currentConnectionState == BluetoothProfile.STATE_CONNECTED ||
++                        currentConnectionState == BluetoothProfile.STATE_CONNECTING) {
++                    debugLog("disconnect a2dp sink");
++                    a2dpSinkService.disconnect(device);
++                    addToWaitACL = true;
++                }
++            }
++
++            if (hidService != null) {
++                currentConnectionState = hidService.getConnectionState(device);
++                if (currentConnectionState == BluetoothProfile.STATE_CONNECTED ||
++                        currentConnectionState == BluetoothProfile.STATE_CONNECTING) {
++                    debugLog("disconnect HID disconnect");
++                    hidService.disconnect(device);
++                    addToWaitACL = true;
++                }
++            }
++
++            if (addToWaitACL == true) {
++                debugLog("Add this device ACL to wait for ACL disconnection list");
++                mDevicesToWaitForAcLDisconnection.add(device);
++            }
++        }
++    }
++
++    public void processAclDown (BluetoothDevice device) {
++        debugLog("processAclDown");
++        if(sleepInitiated == true) {
++            debugLog("ACL connection got disconnected with device:");
++            mDevicesToWaitForAcLDisconnection.remove(device);
++            //If No ACL && No Bonding in progress & No Inquiry in progress
++            if((mDevicesToWaitForAcLDisconnection.isEmpty() == true)
++                    && (isDiscovering() == false)
++                    && (mAdapterProperties.anyDeviceInBluetoothBondingState() == null)
++                    && (mRemoteDevices.getExistingNumberOfAclLinks() == 0)) {
++                debugLog("Invoke unifiedWakeUpSleepIndNative");
++                unifiedWakeUpSleepIndNative(true);
++                sleepInitiated = false;
++            }
++            else {
++                debugLog("Host is not in Idle condition to send sleep indication");
++            }
++        }
++    }
++
+     public void addProfile(ProfileService profile) {
+         synchronized (mProfiles) {
+             if (!mProfiles.contains(profile)) {
+@@ -527,6 +614,13 @@ public class AdapterService extends Service {
+         mProfileObserver.start();
+ 
+         setAdapterService(this);
++	 //Unified Wake up feature ++
++	 IntentFilter intentFilter1 = new IntentFilter();
++        intentFilter1.addAction(Intent.ACTION_SCREEN_OFF);
++        intentFilter1.addAction(Intent.ACTION_SCREEN_ON);
++        intentFilter1.addAction(Intent.ACTION_SHUTDOWN);
++        registerReceiver(mPowerManagerBroadcastReceiver, intentFilter1);
++	 //Unified Wake up feature --
+     }
+ 
+     @Override
+@@ -722,6 +816,8 @@ public class AdapterService extends Service {
+     private static final int MESSAGE_CONNECT_OTHER_PROFILES = 30;
+     private static final int MESSAGE_PROFILE_INIT_PRIORITIES=40;
+     private static final int CONNECT_OTHER_PROFILES_TIMEOUT= 6000;
++    private static final int MESSAGE_ACTION_SCREEN_OFF=50;
++    private static final int MESSAGE_ACTION_SCREEN_ON=60;
+ 
+     private final Handler mHandler = new Handler() {
+         @Override
+@@ -753,6 +849,40 @@ public class AdapterService extends Service {
+                     processConnectOtherProfiles((BluetoothDevice) msg.obj,msg.arg1);
+                 }
+                     break;
++                case MESSAGE_ACTION_SCREEN_OFF:
++                    debugLog("MESSAGE_ACTION_SCREEN_OFF Received");
++
++                    if(sleepInitiated == false) {
++                        sleepInitiated = true;
++                        //If Inquiry is in progress, Cancel Inquiry.
++                        if (isDiscovering() == true) {
++                            debugLog("Cancel Inquiry in Progress");
++                            cancelDiscovery();
++                        }
++
++                        GattService gattService = GattService.getGattService();
++                        if (gattService != null) {
++                            gattService.stopActiveAdvertising();
++                        }
++                        //If Bonding is in progress, Cancel Bonding
++                        bondingDevice = mAdapterProperties.anyDeviceInBluetoothBondingState();
++                        if (bondingDevice != null) {
++                            debugLog("Cancel Bonding in Progress");
++                            cancelBondProcess(bondingDevice);
++                        }
++
++                        //Disconnect All profiles based on all the profiles/services running.[I.e call service.disconnect!!]
++                        disconnectAllActiveProfileConnections();
++                        unifiedWakeUpSleepInd(true);
++                    }
++                    break;
++                case MESSAGE_ACTION_SCREEN_ON:
++                    debugLog("MESSAGE_ACTION_SCREEN_ON Received");
++                    sleepInitiated = false;
++                    unifiedWakeUpSleepInd(false);
++                    //Todo: Reconnect ALL the profiles that was connected earlier.
++                    //FW team needs to support in providing Bluetooth device address that woke up.
++                    break;
+             }
+         }
+     };
+@@ -1555,6 +1685,31 @@ public class AdapterService extends Service {
+         return mAdapterProperties.setDiscoverableTimeout(timeout);
+     }
+ 
++//Unified Wake up feature++
++    boolean unifiedWakeUpSleepInd(boolean isSleep) {
++        enforceCallingOrSelfPermission(BLUETOOTH_ADMIN_PERM,
++                                        "Need BLUETOOTH ADMIN permission");
++        debugLog("unifiedWakeUpSleepInd ");
++        if (isSleep == true)  {
++            //If No ACL && No Bonding in progress & No Inquiry in progress
++            if((mDevicesToWaitForAcLDisconnection.isEmpty() == true)
++                    && (isDiscovering() == false)
++                    && (mAdapterProperties.anyDeviceInBluetoothBondingState() == null)
++                    && (mRemoteDevices.getExistingNumberOfAclLinks() == 0)) {
++                sleepInitiated = false;
++                debugLog("Invoke unifiedWakeUpSleepIndNative");
++                return unifiedWakeUpSleepIndNative(true);
++            }
++            else {
++                debugLog("Host is not in Idle condition to send sleep indication");
++                return false;
++            }
++        }
++        else {
++            return unifiedWakeUpSleepIndNative(false);
++        }
++    }
++//Unified Wake up feature --
+      boolean startDiscovery() {
+         enforceCallingOrSelfPermission(BLUETOOTH_ADMIN_PERM,
+                                        "Need BLUETOOTH ADMIN permission");
+@@ -2496,6 +2651,24 @@ public class AdapterService extends Service {
+         }
+     };
+ 
++//Unified Wake up feature ++
++       private final BroadcastReceiver mPowerManagerBroadcastReceiver = new BroadcastReceiver() {
++            @Override
++            public void onReceive(Context context, Intent intent) {
++                Message m;
++                String action = intent.getAction();
++                Log.d(TAG,"action is " + action);
++                if ((action.equals(Intent.ACTION_SCREEN_OFF)) ||
++                    (action.equals(Intent.ACTION_SHUTDOWN)))     {
++                    m = mHandler.obtainMessage(MESSAGE_ACTION_SCREEN_OFF);
++                    mHandler.sendMessage(m);
++                } else if (action.equals(Intent.ACTION_SCREEN_ON)){
++                    m = mHandler.obtainMessage(MESSAGE_ACTION_SCREEN_ON);
++                    mHandler.sendMessage(m);
++                }
++        }
++    };
++//Unified Wake up feature --
+     private native static void classInitNative();
+     private native boolean initNative();
+     private native void cleanupNative();
+@@ -2542,6 +2715,9 @@ public class AdapterService extends Service {
+ 
+     private native void interopDatabaseClearNative();
+     private native void interopDatabaseAddNative(int feature, byte[] address, int length);
++    //Unified Wake up feature ++
++    private native boolean unifiedWakeUpSleepIndNative(boolean isSleep);
++    //Unified Wake up feature --
+ 
+     protected void finalize() {
+         cleanup();
+diff --git a/src/com/android/bluetooth/btservice/RemoteDevices.java b/src/com/android/bluetooth/btservice/RemoteDevices.java
+index cdaab45..253882b 100644
+--- a/src/com/android/bluetooth/btservice/RemoteDevices.java
++++ b/src/com/android/bluetooth/btservice/RemoteDevices.java
+@@ -51,6 +51,8 @@ final class RemoteDevices {
+     private HashMap<String, DeviceProperties> mDevices;
+     private Queue<String> mDeviceQueue;
+ 
++    private int numberOfAclLinks = 0;
++
+     RemoteDevices(AdapterService service) {
+         mAdapter = BluetoothAdapter.getDefaultAdapter();
+         mAdapterService = service;
+@@ -359,6 +361,11 @@ final class RemoteDevices {
+                         android.Manifest.permission.ACCESS_COARSE_LOCATION});
+     }
+ 
++    int getExistingNumberOfAclLinks() {
++        debugLog("Total Number of Existing ACL links is:"+numberOfAclLinks);
++        return numberOfAclLinks;
++    }
++
+     void aclStateChangeCallback(int status, byte[] address, int newState) {
+         BluetoothDevice device = getDevice(address);
+ 
+@@ -373,8 +380,12 @@ final class RemoteDevices {
+         if (prop == null) {
+  //         errorLog("aclStateChangeCallback reported unknown device " + Arrays.toString(address));
+         }
++
+         Intent intent = null;
+         if (newState == AbstractionLayer.BT_ACL_STATE_CONNECTED) {
++            //Unified Wakeup ++
++            numberOfAclLinks ++;
++            //Unified Wakeup --
+             if (state == BluetoothAdapter.STATE_ON || state == BluetoothAdapter.STATE_TURNING_ON) {
+                 intent = new Intent(BluetoothDevice.ACTION_ACL_CONNECTED);
+             } else if (state == BluetoothAdapter.STATE_BLE_ON || state == BluetoothAdapter.STATE_BLE_TURNING_ON) {
+@@ -382,6 +393,10 @@ final class RemoteDevices {
+             }
+             debugLog("aclStateChangeCallback: State:Connected to Device:" + device);
+         } else {
++            //Unified Wakeup ++
++            numberOfAclLinks --;
++            mAdapterService.processAclDown(device);
++            //Unified Wakeup --
+             if (device.getBondState() == BluetoothDevice.BOND_BONDING) {
+                 /*Broadcasting PAIRING_CANCEL intent as well in this case*/
+                 intent = new Intent(BluetoothDevice.ACTION_PAIRING_CANCEL);
+diff --git a/src/com/android/bluetooth/gatt/AdvertiseManager.java b/src/com/android/bluetooth/gatt/AdvertiseManager.java
+index 9780d7b..330d802 100644
+--- a/src/com/android/bluetooth/gatt/AdvertiseManager.java
++++ b/src/com/android/bluetooth/gatt/AdvertiseManager.java
+@@ -119,6 +119,19 @@ class AdvertiseManager {
+         mHandler.sendMessage(message);
+     }
+ 
++    void stopAdvertisingIfAny() {
++        if(mAdvertiseClients.isEmpty()== true) {
++            logd("BLE advertising is not in progress");
++        }
++        else {
++            AdvertiseClient[] advertisingClients = mAdvertiseClients.toArray(new AdvertiseClient[mAdvertiseClients.size()]);
++            for(AdvertiseClient bleClient:advertisingClients) {
++                stopAdvertising(bleClient);
++                logd("Stopping BLE advertisement from clientIf:"+ bleClient.clientIf);
++            }
++        }
++    }
++
+     /**
+      * Signals the callback is received.
+      *
+diff --git a/src/com/android/bluetooth/gatt/GattService.java b/src/com/android/bluetooth/gatt/GattService.java
+index a406b40..7b1b6b7 100644
+--- a/src/com/android/bluetooth/gatt/GattService.java
++++ b/src/com/android/bluetooth/gatt/GattService.java
+@@ -136,6 +136,8 @@ public class GattService extends ProfileService {
+     ArrayList<BluetoothProto.ScanEvent> mScanEvents =
+         new ArrayList<BluetoothProto.ScanEvent>(NUM_SCAN_EVENTS_KEPT);
+ 
++    private static GattService sGattService;
++
+     private ServiceDeclaration addDeclaration() {
+         synchronized (mServiceDeclarations) {
+             mServiceDeclarations.add(new ServiceDeclaration());
+@@ -197,6 +199,7 @@ public class GattService extends ProfileService {
+         mScanManager = new ScanManager(this);
+         mScanManager.start();
+ 
++        setGattService(this);
+         return true;
+     }
+ 
+@@ -220,6 +223,36 @@ public class GattService extends ProfileService {
+         return true;
+     }
+ 
++    public static synchronized GattService getGattService(){
++        if (sGattService != null && sGattService.isAvailable()) {
++            if (DBG) Log.d(TAG, "getGattService(): returning " + sGattService);
++            return sGattService;
++        }
++        if (DBG)  {
++            if (sGattService == null) {
++                Log.d(TAG, "getGattService(): service is NULL");
++            } else if (!(sGattService.isAvailable())) {
++                Log.d(TAG,"getGattService(): service is not available");
++            }
++        }
++        return null;
++    }
++
++    private static synchronized void setGattService(GattService instance) {
++        if (instance != null && instance.isAvailable()) {
++            if (DBG) Log.d(TAG, "setGattService(): set to: " + sGattService);
++            sGattService = instance;
++        } else {
++            if (DBG)  {
++                if (sGattService == null) {
++                    Log.d(TAG, "setGattService(): service not available");
++                } else if (!sGattService.isAvailable()) {
++                    Log.d(TAG,"setGattService(): service is cleaning up");
++                }
++            }
++        }
++    }
++
+     boolean permissionCheck(int connId, int handle) {
+         List<BluetoothGattService> db = gattClientDatabases.get(connId);
+         if (db == null) return true;
+@@ -1428,6 +1461,12 @@ public class GattService extends ProfileService {
+         mAdvertiseManager.stopAdvertising(client);
+     }
+ 
++    public void stopActiveAdvertising() {
++        enforceAdminPermission();
++        Log.d(TAG, "StopActiveAdvertising");
++        mAdvertiseManager.stopAdvertisingIfAny();
++    }
++
+     int numHwTrackFiltersAvailable() {
+         return (AdapterService.getAdapterService().getTotalNumOfTrackableAdvertisements()
+                     - mScanManager.getCurrentUsedTrackingAdvertisement());
+diff --git a/src/com/android/bluetooth/hfp/AtPhonebook.java b/src/com/android/bluetooth/hfp/AtPhonebook.java
+old mode 100755
+new mode 100644
+diff --git a/src/com/android/bluetooth/hfp/HeadsetService.java b/src/com/android/bluetooth/hfp/HeadsetService.java
+old mode 100755
+new mode 100644
+diff --git a/src/com/android/bluetooth/hfpclient/HeadsetClientStateMachine.java b/src/com/android/bluetooth/hfpclient/HeadsetClientStateMachine.java
+old mode 100755
+new mode 100644
+diff --git a/src/com/android/bluetooth/hid/HidService.java b/src/com/android/bluetooth/hid/HidService.java
+old mode 100755
+new mode 100644
+index be769fc..ea7dad3
+--- a/src/com/android/bluetooth/hid/HidService.java
++++ b/src/com/android/bluetooth/hid/HidService.java
+@@ -411,14 +411,14 @@ public class HidService extends ProfileService {
+         return true;
+     }
+ 
+-    boolean disconnect(BluetoothDevice device) {
++    public boolean disconnect(BluetoothDevice device) {
+         enforceCallingOrSelfPermission(BLUETOOTH_PERM, "Need BLUETOOTH permission");
+         Message msg = mHandler.obtainMessage(MESSAGE_DISCONNECT,device);
+         mHandler.sendMessage(msg);
+         return true;
+     }
+ 
+-    int getConnectionState(BluetoothDevice device) {
++    public int getConnectionState(BluetoothDevice device) {
+         if (mInputDevices.get(device) == null) {
+             return BluetoothInputDevice.STATE_DISCONNECTED;
+         }
+diff --git a/src/com/android/bluetooth/map/BluetoothMapUtils.java b/src/com/android/bluetooth/map/BluetoothMapUtils.java
+old mode 100755
+new mode 100644
+diff --git a/src/com/android/bluetooth/opp/BluetoothOppRfcommListener.java b/src/com/android/bluetooth/opp/BluetoothOppRfcommListener.java
+old mode 100755
+new mode 100644
+diff --git a/src/com/android/bluetooth/opp/BluetoothOppService.java b/src/com/android/bluetooth/opp/BluetoothOppService.java
+old mode 100755
+new mode 100644
+diff --git a/src/com/android/bluetooth/opp/BluetoothOppTransfer.java b/src/com/android/bluetooth/opp/BluetoothOppTransfer.java
+old mode 100755
+new mode 100644
+diff --git a/src/com/android/bluetooth/pan/PanService.java b/src/com/android/bluetooth/pan/PanService.java
+old mode 100755
+new mode 100644
+diff --git a/tests/Android.mk b/tests/Android.mk
+old mode 100755
+new mode 100644
+diff --git a/tests/AndroidManifest.xml b/tests/AndroidManifest.xml
+old mode 100755
+new mode 100644
+diff --git a/tests/src/com/android/bluetooth/tests/BluetoothMapbMessageTest.java b/tests/src/com/android/bluetooth/tests/BluetoothMapbMessageTest.java
+old mode 100755
+new mode 100644

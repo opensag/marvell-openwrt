@@ -1,0 +1,12 @@
+diff --git a/ueventd.x86.rc b/ueventd.x86.rc
+index c88a243..a049e98 100644
+--- a/ueventd.x86.rc
++++ b/ueventd.x86.rc
+@@ -3,6 +3,7 @@
+ /dev/ttyUSB*              0660  radio         radio
+ /dev/video*               0660  cameraserver  system
+ /dev/iio:device*          0660  system        system
++/dev/bt_usb*              0660  bluetooth     bluetooth
+ 
+ # for bluetooth nodes
+ /dev/rfkill               0660  bluetooth     bluetooth

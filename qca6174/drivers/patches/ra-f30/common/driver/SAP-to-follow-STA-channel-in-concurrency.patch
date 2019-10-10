@@ -1,0 +1,1067 @@
+From 4505c2950b57a29a5661f2d8403f22998c3c22cc Mon Sep 17 00:00:00 2001
+From: nakul kachhwaha <nkachhwa@codeaurora.org>
+Date: Wed, 24 Jan 2018 18:42:06 +0530
+Subject: [PATCH] qcacld-2.0: SAP to follow STA channel in concurrency
+
+In SAP+STA mode, SAP to switch channel to STA operating
+channel by transmitting CSA, instead of direct restarting
+on new channel.
+
+Change-Id: I512100d83b2597d9d729ec1ea42c08888ad37f41
+CRs-Fixed: 2178029
+---
+ CORE/HDD/inc/wlan_hdd_cfg.h                 |  13 ++
+ CORE/HDD/inc/wlan_hdd_hostapd.h             |  15 +-
+ CORE/HDD/inc/wlan_hdd_main.h                |  18 ++
+ CORE/HDD/src/wlan_hdd_assoc.c               |  19 ++
+ CORE/HDD/src/wlan_hdd_cfg.c                 |  13 ++
+ CORE/HDD/src/wlan_hdd_hostapd.c             | 269 ++++++++++++++++++++++++++++
+ CORE/HDD/src/wlan_hdd_main.c                | 116 +++++++++++-
+ CORE/HDD/src/wlan_hdd_p2p.c                 |  21 ++-
+ CORE/MAC/inc/sirApi.h                       |   7 +
+ CORE/MAC/src/pe/lim/limSendSmeRspMessages.c |   6 +-
+ CORE/SAP/inc/sapApi.h                       |   8 +-
+ CORE/SERVICES/WMA/wma.c                     |   6 +
+ CORE/SME/inc/csrApi.h                       |   5 +-
+ CORE/SME/inc/smeInternal.h                  |   4 +
+ CORE/SME/inc/sme_Api.h                      |   8 +
+ CORE/SME/src/csr/csrUtil.c                  |  24 ++-
+ CORE/SME/src/sme_common/sme_Api.c           |  37 ++++
+ CORE/SVC/external/wlan_nlink_common.h       |  13 +-
+ CORE/VOSS/inc/vos_api.h                     |   2 +-
+ CORE/VOSS/src/vos_api.c                     |  21 +++
+ CORE/WDA/inc/legacy/halMsgApi.h             |   3 +
+ Kbuild                                      |   3 +-
+ 22 files changed, 614 insertions(+), 17 deletions(-)
+
+diff --git a/CORE/HDD/inc/wlan_hdd_cfg.h b/CORE/HDD/inc/wlan_hdd_cfg.h
+index a4dc09d..8265db1 100644
+--- a/CORE/HDD/inc/wlan_hdd_cfg.h
++++ b/CORE/HDD/inc/wlan_hdd_cfg.h
+@@ -5061,6 +5061,15 @@ FG_BTC_BT_INTERVAL_PAGE_P2P_STA_DEFAULT
+ #define CFG_ENABLE_MONITOR_ON_STA_MAX     (1)
+ #define CFG_ENABLE_MONITOR_ON_STA_DEFAULT (0)
+ 
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++/*SAP Channel Switch Support*/
++#define CFG_SAP_CHANNEL_SWITCH_WITH_CSA_NAME "gSAPChannelSwitchWithCSA"
++#define CFG_SAP_CHANNEL_SWITCH_WITH_CSA_MIN      (0)
++#define CFG_SAP_CHANNEL_SWITCH_WITH_CSA_MAX      (1)
++#define CFG_SAP_CHANNEL_SWITCH_WITH_CSA_DEFAULT  (0)
++
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++
+ /*---------------------------------------------------------------------------
+   Type declarations
+   -------------------------------------------------------------------------*/
+@@ -5957,6 +5966,10 @@ struct hdd_config {
+    uint32_t  cca_threshold_2g;
+    uint32_t  cca_threshold_5g;
+    uint8_t                     mon_on_sta_enable;
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++   uint32_t                    sap_ch_switch_with_csa;
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++
+ };
+ 
+ typedef struct hdd_config hdd_config_t;
+diff --git a/CORE/HDD/inc/wlan_hdd_hostapd.h b/CORE/HDD/inc/wlan_hdd_hostapd.h
+index 2a08dc9..a45564d 100644
+--- a/CORE/HDD/inc/wlan_hdd_hostapd.h
++++ b/CORE/HDD/inc/wlan_hdd_hostapd.h
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2013-2017 The Linux Foundation. All rights reserved.
++ * Copyright (c) 2013-2018 The Linux Foundation. All rights reserved.
+  *
+  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
+  *
+@@ -123,7 +123,20 @@ hdd_set_sap_auth_offload(hdd_adapter_t *pHostapdAdapter, bool enabled)
+ {
+ }
+ #endif /* SAP_AUTH_OFFLOAD */
++
++int hdd_softap_set_channel_change(struct net_device *dev, int target_channel);
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++VOS_STATUS hdd_sta_state_sap_notify(hdd_context_t *hdd_context,
++                                sta_sap_notifications event,
++                                struct wlan_sap_csa_info csa_info);
++VOS_STATUS hdd_send_sap_event(struct net_device *dev,
++                sta_sap_notifications event,
++                struct wlan_sap_csa_info csa_info,
++                struct wireless_dev *wdev);
++void hdd_hostapd_chan_switch_cb(v_PVOID_t usrDataForCallback);
++
+ int hdd_softap_set_channel_change(struct net_device *dev, int target_channel);
++#endif //WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+ 
+ /**
+  * hdd_is_sta_connection_pending() - This function will check if sta connection
+diff --git a/CORE/HDD/inc/wlan_hdd_main.h b/CORE/HDD/inc/wlan_hdd_main.h
+index ad7121a..bc8e710 100644
+--- a/CORE/HDD/inc/wlan_hdd_main.h
++++ b/CORE/HDD/inc/wlan_hdd_main.h
+@@ -1735,6 +1735,21 @@ struct hdd_scan_chan_info {
+ 	uint32_t clock_freq;
+ };
+ 
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++typedef struct sap_ch_switch_with_csa_ctx
++{
++    v_BOOL_t is_ch_sw_through_sta_csa;
++    u_int8_t tbtt_count;
++    v_U8_t csa_to_channel; //channel on which SAP will move after sending CSA
++    v_U8_t sap_chan_sw_pending; //SAP channel switch pending after STA disconnect
++    vos_timer_t hdd_ap_chan_switch_timer; //timer to init SAP chan switch
++    v_BOOL_t chan_sw_timer_initialized;
++    v_U8_t def_csa_channel_on_disc;
++    v_BOOL_t scan_only_dfs_channels;
++    struct mutex sap_ch_sw_lock; //Synchronize access to sap_chan_sw_pending
++}sap_ch_switch_ctx;
++#endif
++
+ /** Adapter stucture definition */
+ 
+ struct hdd_context_s
+@@ -2133,6 +2148,9 @@ struct hdd_context_s
+ #endif
+     /* flag to show whether moniotr mode is enabled */
+     bool is_mon_enable;
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++    sap_ch_switch_ctx  ch_switch_ctx;
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_CHAN
+ };
+ 
+ /*---------------------------------------------------------------------------
+diff --git a/CORE/HDD/src/wlan_hdd_assoc.c b/CORE/HDD/src/wlan_hdd_assoc.c
+index d2166d0..1c16702 100644
+--- a/CORE/HDD/src/wlan_hdd_assoc.c
++++ b/CORE/HDD/src/wlan_hdd_assoc.c
+@@ -75,6 +75,10 @@
+ 
+ #include "adf_trace.h"
+ 
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++#include "wlan_hdd_hostapd.h"
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++
+ struct ether_addr
+ {
+     u_char  ether_addr_octet[6];
+@@ -1635,6 +1639,21 @@ static eHalStatus hdd_DisConnectHandler( hdd_adapter_t *pAdapter, tCsrRoamInfo *
+             }
+ #endif
+ 
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++            if((pAdapter->device_mode == WLAN_HDD_INFRA_STATION) &&
++                    vos_is_ch_switch_with_csa_enabled())
++            {
++                struct wlan_sap_csa_info csa_info;
++                hddLog(VOS_TRACE_LEVEL_INFO_HIGH,
++                    "%s: Indicate disconnected event to HostApd",
++                    __func__);
++
++                csa_info.sta_channel = 0;
++                /*Indicate to HostApd about Station interface state change*/
++                hdd_sta_state_sap_notify(pHddCtx, STA_NOTIFY_DISCONNECTED, csa_info);
++            }
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++
+             //If the Device Mode is Station
+             // and the P2P Client is Connected
+             //Enable BMPS
+diff --git a/CORE/HDD/src/wlan_hdd_cfg.c b/CORE/HDD/src/wlan_hdd_cfg.c
+index a1e8202..e27bb04 100644
+--- a/CORE/HDD/src/wlan_hdd_cfg.c
++++ b/CORE/HDD/src/wlan_hdd_cfg.c
+@@ -4279,6 +4279,16 @@ REG_TABLE_ENTRY g_registry_table[] =
+               CFG_CONNECT_BLOCK_DURATION_MAX ),
+ #endif /* SAP_AUTH_OFFLOAD */
+ 
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++   REG_VARIABLE( CFG_SAP_CHANNEL_SWITCH_WITH_CSA_NAME, WLAN_PARAM_Integer,
++              hdd_config_t, sap_ch_switch_with_csa,
++              VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
++              CFG_SAP_CHANNEL_SWITCH_WITH_CSA_DEFAULT,
++              CFG_SAP_CHANNEL_SWITCH_WITH_CSA_MIN,
++              CFG_SAP_CHANNEL_SWITCH_WITH_CSA_MAX ),
++
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++
+    REG_VARIABLE(CFG_DOT11P_MODE_NAME, WLAN_PARAM_Integer,
+                 hdd_config_t, dot11p_mode,
+                 VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
+@@ -8276,6 +8286,9 @@ VOS_STATUS hdd_set_sme_config( hdd_context_t *pHddCtx )
+    smeConfig->sta_change_cc_via_beacon =
+ 	 pHddCtx->cfg_ini->sta_change_cc_via_beacon;
+ 
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++   smeConfig->csrConfig.sap_ch_switch_with_csa = pHddCtx->cfg_ini->sap_ch_switch_with_csa;
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+    halStatus = sme_UpdateConfig( pHddCtx->hHal, smeConfig);
+    if ( !HAL_STATUS_SUCCESS( halStatus ) )
+    {
+diff --git a/CORE/HDD/src/wlan_hdd_hostapd.c b/CORE/HDD/src/wlan_hdd_hostapd.c
+index 3138bd1..3b8373f 100644
+--- a/CORE/HDD/src/wlan_hdd_hostapd.c
++++ b/CORE/HDD/src/wlan_hdd_hostapd.c
+@@ -97,6 +97,10 @@ extern int process_wma_set_command(int sessid, int paramid,
+ #include "wlan_hdd_tsf.h"
+ #include "wlan_hdd_oemdata.h"
+ 
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++#include <vos_utils.h>
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++
+ #define    IS_UP(_dev) \
+     (((_dev)->flags & (IFF_RUNNING|IFF_UP)) == (IFF_RUNNING|IFF_UP))
+ #define    IS_UP_AUTO(_ic) \
+@@ -1129,6 +1133,46 @@ void hdd_hostapd_inactivity_timer_cb(v_PVOID_t usrDataForCallback)
+     EXIT();
+ }
+ 
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++//This function runs in the timer context of hdd_ap_chan_switch_timer.
++void hdd_hostapd_chan_switch_cb(v_PVOID_t usrDataForCallback)
++{
++    hdd_adapter_t   *pHostapdAdapter = NULL;
++    hdd_context_t   *pHddCtx = NULL;
++    int             ret = 0;
++
++    ENTER();
++
++    if(usrDataForCallback)
++    {
++        pHostapdAdapter = (struct hdd_adapter_s *)usrDataForCallback;
++    }
++    else
++    {
++        hddLog(LOGE, FL("hdd_hostapd_chan_switch_cb NULL cb pointer!!\n"));
++                EXIT();
++        return;
++    }
++    pHddCtx = WLAN_HDD_GET_CTX(pHostapdAdapter);
++
++    mutex_lock(&pHddCtx->ch_switch_ctx.sap_ch_sw_lock);
++    if(pHddCtx->ch_switch_ctx.sap_chan_sw_pending)
++    {
++        vos_ssr_protect(__func__);
++        ret = hdd_softap_set_channel_change(pHostapdAdapter->dev, pHddCtx->ch_switch_ctx.def_csa_channel_on_disc);
++        vos_ssr_unprotect(__func__);
++        if (ret)
++        {
++            hddLog(LOGE, FL("hdd_softap_set_channel_change failed!!"));
++        }
++        pHddCtx->ch_switch_ctx.sap_chan_sw_pending = 0;
++    }
++    mutex_unlock(&pHddCtx->ch_switch_ctx.sap_ch_sw_lock);
++
++    EXIT();
++}
++#endif //#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++
+ static VOS_STATUS
+ hdd_change_mcc_go_beacon_interval(hdd_adapter_t *pHostapdAdapter)
+ {
+@@ -1507,6 +1551,218 @@ VOS_STATUS hdd_chan_change_notify(hdd_adapter_t *hostapd_adapter,
+ 	return VOS_STATUS_SUCCESS;
+ }
+ 
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++VOS_STATUS hdd_send_sap_event(struct net_device *dev,
++                sta_sap_notifications event,
++                struct wlan_sap_csa_info csa_info,
++                struct wireless_dev *wdev)
++{
++    uint32_t freq = 0, ret;
++
++    hdd_wlan_get_freq(csa_info.sta_channel, &freq);
++
++    hddLog(LOG1, FL(" Set Freq %d Chan= %d"), freq, csa_info.sta_channel );
++
++    vos_ssr_protect(__func__);
++    ret = hdd_softap_set_channel_change(dev, csa_info.sta_channel);
++    vos_ssr_unprotect(__func__);
++
++    return ret;
++}
++
++VOS_STATUS hdd_sta_state_sap_notify(hdd_context_t *hdd_context,
++                                sta_sap_notifications event,
++                                struct wlan_sap_csa_info csa_info)
++{
++    /* Get the HostApd Adapter. If present proceed further.
++     * Check the current state of SAP. If its in active state, get the channel in which it is running.
++     * Verify the channel and band. Based on the event type, take a decision.
++     * If it is a disconnection event and SAP is running in 2.4 band channel, no action should be taken.
++     * If its a connection event and SAP needs to do a CSA to the HomeAP channel.
++     */
++
++    hdd_adapter_t *pHostapdAdapter = NULL;
++    hdd_ap_ctx_t *pHddApCtx = NULL;
++    hdd_hostapd_state_t *pHostapdState = NULL;
++    VOS_STATUS status = VOS_STATUS_SUCCESS;
++    tsap_Config_t *sap_config;
++    uint32_t ret = 0;
++
++    hddLog(LOGE, FL("%s Entry event = %d channel = %d"),
++                        __func__, event, csa_info.sta_channel);
++
++    if (!hdd_context) {
++        hddLog(LOGE, FL("HDD context is NULL"));
++                return VOS_STATUS_E_FAILURE;
++    }
++
++    ret = wlan_hdd_validate_context(hdd_context);
++
++    if (ret != 0) {
++
++        hddLog(LOGE, FL("%s Failed in hdd_validate_context ret=%d"), __func__, ret);
++        return ret;
++    }
++
++    /*Get the Adapter of SAP*/
++    pHostapdAdapter = hdd_get_adapter(hdd_context, WLAN_HDD_SOFTAP);
++
++    if(!pHostapdAdapter)
++    {
++        hddLog(LOGE, FL("Hostapd adapter context is NULL"));
++        return VOS_STATUS_E_FAILURE;
++    }
++
++    pHddApCtx = WLAN_HDD_GET_AP_CTX_PTR(pHostapdAdapter);
++
++    pHostapdState = WLAN_HDD_GET_HOSTAP_STATE_PTR(pHostapdAdapter);
++
++    /*Verify the state*/
++    if(pHostapdState->vosStatus != VOS_STATUS_SUCCESS ||
++            pHostapdState->bssState != BSS_START)
++    {
++        hddLog(LOGE, FL("Invalid HostApd State vosStatus=%d bssState=%d"),
++                    pHostapdState->vosStatus, pHostapdState->bssState);
++        return VOS_STATUS_E_FAILURE;
++    }
++
++    switch(event)
++    {
++        case STA_NOTIFY_DISCONNECTED:
++            {
++                /* check for the operating channel
++                 * If operating in 2.4, just ignore and return
++                 * else start ACS & find the strongest signal channel and do initiate CSA to that channel.
++                 */
++                if((pHddApCtx->operatingChannel >= 1 && pHddApCtx->operatingChannel <= 14))
++                {
++                    hddLog(LOGE, FL("Hostapd is operating in 2.4Band Channel=%d, Avoid channel switch"),
++                                        pHddApCtx->operatingChannel);
++                }
++                else
++                {
++		    sap_config = &((WLAN_HDD_GET_AP_CTX_PTR(pHostapdAdapter))->sapConfig);
++		    if (VOS_IS_DFS_CH(pHddApCtx->operatingChannel) &&
++				( VOS_IS_DFS_CH(sap_config->channel) ||
++					(sap_config->channel == AUTO_CHANNEL_SELECT) )){
++			hddLog(LOGE, FL("SAP CUR CH %d(DFS) Hostapd Conf CH=%d(%s) Switch to CH %d"),
++					pHddApCtx->operatingChannel, pHddApCtx->operatingChannel,
++				        (sap_config->channel == AUTO_CHANNEL_SELECT)?"AUTO":"DFS", 36);
++                        hdd_context->ch_switch_ctx.def_csa_channel_on_disc = 36;
++		    }else if (VOS_IS_DFS_CH(pHddApCtx->operatingChannel) &&
++				!VOS_IS_DFS_CH(sap_config->channel)){
++			hddLog(LOGE, FL("SAP CUR CH %d(DFS) Hostapd Conf CH=%d(Non-DFS) Switch to %d"),
++					pHddApCtx->operatingChannel, sap_config->channel, sap_config->channel);
++			hdd_context->ch_switch_ctx.def_csa_channel_on_disc = sap_config->channel; //channel from the hostapd
++		    }else{
++			    hddLog(LOGE, FL("SAP is operating in 5Ghz Band Non DFS Channel=%d, Avoid channel switch"),
++					    pHddApCtx->operatingChannel);
++			    return status;
++		    }
++		    mutex_lock(&hdd_context->ch_switch_ctx.sap_ch_sw_lock);
++		    hdd_context->ch_switch_ctx.sap_chan_sw_pending = 1;
++		    mutex_unlock(&hdd_context->ch_switch_ctx.sap_ch_sw_lock);
++
++		    //Set the timer to initiate channel switch
++		    if(hdd_context->ch_switch_ctx.chan_sw_timer_initialized == VOS_TRUE)
++		    {
++			    status = vos_timer_start(&hdd_context->ch_switch_ctx.hdd_ap_chan_switch_timer, 10000);
++			    if(!VOS_IS_STATUS_SUCCESS(status))
++			    {
++				    hddLog(LOGE, FL("Failed to start AP channel switch timer!!"));
++				    break;
++			    }
++		    }
++		}
++	    }
++	    break;
++	case STA_NOTIFY_CONNECTED:
++	    {
++		    //stop the channel switch timer first
++		    if (hdd_context->ch_switch_ctx.hdd_ap_chan_switch_timer.state == VOS_TIMER_STATE_RUNNING)
++		    {
++			    status = vos_timer_stop(&hdd_context->ch_switch_ctx.hdd_ap_chan_switch_timer);
++			    if(!VOS_IS_STATUS_SUCCESS(status))
++			    {
++				    hddLog(LOGE, FL("Failed to stop AP channel switch timer!!"));
++				    break;
++			    }
++		    }
++		    if(pHddApCtx->operatingChannel != csa_info.sta_channel)
++		    {
++			    mutex_lock(&hdd_context->ch_switch_ctx.sap_ch_sw_lock);
++			    hddLog(LOGE, FL("Switching Hostapd to Station channel %d"), csa_info.sta_channel);
++			    status = hdd_send_sap_event(pHostapdAdapter->dev,
++					    event,
++					    csa_info,
++					    &pHostapdAdapter->wdev);
++			    if(!VOS_IS_STATUS_SUCCESS(status))
++			    {
++				    hddLog(LOGE, FL("Failed to send channel switch event!!"));
++				    mutex_unlock(&hdd_context->ch_switch_ctx.sap_ch_sw_lock);
++				    break;
++			    }
++			    hdd_context->ch_switch_ctx.sap_chan_sw_pending = 0;
++			    mutex_unlock(&hdd_context->ch_switch_ctx.sap_ch_sw_lock);
++		    }
++		    else
++		    {
++			    hddLog(LOGE, FL("Hostapd and Sta are operating in same channel : %d\n"),
++					    pHddApCtx->operatingChannel);
++		    }
++	    }
++	    break;
++	case STA_NOTIFY_CSA:
++	    {
++		    mutex_lock(&hdd_context->ch_switch_ctx.sap_ch_sw_lock);
++		    if(pHddApCtx->operatingChannel != csa_info.sta_channel)
++		    {
++			    if(!(hdd_context->ch_switch_ctx.is_ch_sw_through_sta_csa &&
++						    hdd_context->ch_switch_ctx.csa_to_channel == csa_info.sta_channel))
++			    {
++				    hdd_context->ch_switch_ctx.is_ch_sw_through_sta_csa = VOS_TRUE;
++
++				    hddLog(LOGE, FL("Switching Hostapd to Station channel %d"), csa_info.sta_channel);
++				    status = hdd_send_sap_event(pHostapdAdapter->dev,
++						    event,
++						    csa_info,
++						    &pHostapdAdapter->wdev);
++				    if(!VOS_IS_STATUS_SUCCESS(status))
++				    {
++					    hddLog(LOGE, FL("Failed to send channel switch event!!"));
++					    mutex_unlock(&hdd_context->ch_switch_ctx.sap_ch_sw_lock);
++					    break;
++				    }
++
++				    hdd_context->ch_switch_ctx.csa_to_channel = csa_info.sta_channel;
++			    }
++			    else
++			    {
++				    VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO,
++						    "%s : CSA Sta interface for Channel %d is already notified",
++						    __func__, csa_info.sta_channel);
++			    }
++		    }
++		    else
++		    {
++			    hddLog(LOGE, FL("Hostapd and Sta are operating in same channel : %d\n"),
++					    pHddApCtx->operatingChannel);
++		    }
++		    mutex_unlock(&hdd_context->ch_switch_ctx.sap_ch_sw_lock);
++	    }
++	    break;
++	default:
++	    {
++		    hddLog(LOGE, FL("%s Invalid event %d"), __func__, event);
++	    }
++	    break;
++    }
++
++    hddLog(LOGE, FL("%s Exit ret = %d"), __func__, status);
++
++    return status;
++}
++#endif //#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+ /**
+  * hdd_send_radar_event() - Function to send radar events to user space
+  * @hdd_context:	HDD context
+@@ -2184,6 +2440,19 @@ VOS_STATUS hdd_hostapd_SAPEventCB( tpSap_Event pSapEvent, v_PVOID_t usrDataForCa
+             we_event = IWEVCUSTOM;
+             we_custom_event_generic = we_custom_start_event;
+             hdd_dump_concurrency_info(pHddCtx);
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++            if(pHostapdAdapter->device_mode == WLAN_HDD_SOFTAP)
++	    {
++		    mutex_lock(&pHddCtx->ch_switch_ctx.sap_ch_sw_lock);
++		    if(pHddCtx->ch_switch_ctx.is_ch_sw_through_sta_csa &&
++				    (pHddApCtx->operatingChannel == pHddCtx->ch_switch_ctx.csa_to_channel)){
++			    hddLog(LOG1, FL("Successfully Channel Switch is done to CH = %d"),
++					    pHddApCtx->operatingChannel);
++			    pHddCtx->ch_switch_ctx.is_ch_sw_through_sta_csa = VOS_FALSE;
++		    }
++		    mutex_unlock(&pHddCtx->ch_switch_ctx.sap_ch_sw_lock);
++	    }
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+             break; //Event will be sent after Switch-Case stmt
+ 
+         case eSAP_STOP_BSS_EVENT:
+diff --git a/CORE/HDD/src/wlan_hdd_main.c b/CORE/HDD/src/wlan_hdd_main.c
+index 631f435..c06dd54 100644
+--- a/CORE/HDD/src/wlan_hdd_main.c
++++ b/CORE/HDD/src/wlan_hdd_main.c
+@@ -408,6 +408,14 @@ uint8_t wlan_hdd_find_opclass(tHalHandle hal, uint8_t channel,
+ 	return opclass;
+ }
+ 
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++void hdd_csa_notify_cb
++(
++   void *hdd_context,
++   void *indi_param
++);
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++
+ #ifdef FEATURE_GREEN_AP
+ 
+ static void hdd_wlan_green_ap_timer_fn(void *phddctx)
+@@ -1038,7 +1046,10 @@ void wlan_hdd_restart_sap(hdd_adapter_t *ap_adapter)
+         clear_bit(SOFTAP_BSS_STARTED, &ap_adapter->event_flags);
+         wlan_hdd_decr_active_session(pHddCtx, ap_adapter->device_mode);
+         hddLog(LOGE, FL("SAP Stop Success"));
+-
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++                /*this delay is needed to ensure proper resource cleanup of SAP*/
++                vos_sleep(1000);
++#endif  //#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+         if (pHddCtx->cfg_ini->apOBSSProtEnabled)
+             vos_runtime_pm_allow_suspend(pHddCtx->runtime_context.obss);
+         if (0 != wlan_hdd_cfg80211_update_apies(ap_adapter)) {
+@@ -12702,6 +12713,27 @@ VOS_STATUS hdd_stop_adapter( hdd_context_t *pHddCtx, hdd_adapter_t *pAdapter,
+             wlan_hdd_reset_prob_rspies(pAdapter);
+             kfree(pAdapter->sessionCtx.ap.beacon);
+             pAdapter->sessionCtx.ap.beacon = NULL;
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++            if (pAdapter->device_mode == WLAN_HDD_SOFTAP)
++            {
++                if(pHddCtx->ch_switch_ctx.chan_sw_timer_initialized == VOS_TRUE)
++                {
++                //Stop the channel switch timer
++                    if (VOS_TIMER_STATE_RUNNING ==
++			    vos_timer_getCurrentState(&pHddCtx->ch_switch_ctx.hdd_ap_chan_switch_timer))
++		    {
++			    vos_timer_stop(&pHddCtx->ch_switch_ctx.hdd_ap_chan_switch_timer);
++		    }
++			    //Destroy the channel switch timer
++		    if (!VOS_IS_STATUS_SUCCESS(vos_timer_destroy(
++					&pHddCtx->ch_switch_ctx.hdd_ap_chan_switch_timer)))
++		    {
++			    hddLog(LOGE, FL("Failed to destroy AP channel switch timer!!"));
++		    }
++		    pHddCtx->ch_switch_ctx.chan_sw_timer_initialized = VOS_FALSE;
++                }
++             }
++#endif //WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+          }
+          mutex_unlock(&pHddCtx->sap_lock);
+ 
+@@ -16877,6 +16909,13 @@ int hdd_wlan_startup(struct device *dev, v_VOID_t *hif_sc)
+ #endif
+ #endif /* FEATURE_WLAN_CH_AVOID */
+ 
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++    /* Initialize the lock*/
++   mutex_init(&pHddCtx->ch_switch_ctx.sap_ch_sw_lock);
++    /*Register the CSA Notification callback*/
++   sme_AddCSAIndCallback(pHddCtx->hHal, hdd_csa_notify_cb);
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++
+    status = hdd_post_voss_start_config( pHddCtx );
+    if ( !VOS_IS_STATUS_SUCCESS( status ) )
+    {
+@@ -19541,18 +19580,85 @@ void wlan_hdd_check_sta_ap_concurrent_ch_intf(void *data)
+         pHddApCtx->sapConfig.channel, intf_ch);
+ 
+     pHddApCtx->sapConfig.channel = intf_ch;
+-    pHddApCtx->bss_stop_reason = BSS_STOP_DUE_TO_MCC_SCC_SWITCH;
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++    if(vos_is_ch_switch_with_csa_enabled())
++    {
++        struct wlan_sap_csa_info csa_info;
++
++        csa_info.sta_channel = intf_ch;
+ 
+-    sme_SelectCBMode(hHal,
++        hddLog(VOS_TRACE_LEVEL_INFO_HIGH,
++	    "%s: Indicate connected event to HostApd Chan=%d",
++	    __func__, csa_info.sta_channel);
++
++	/*Indicate to HostApd about Station interface state change*/
++        hdd_sta_state_sap_notify(pHddCtx, STA_NOTIFY_CONNECTED, csa_info);
++    }else{
++#endif
++        pHddApCtx->bss_stop_reason = BSS_STOP_DUE_TO_MCC_SCC_SWITCH;
++        sme_SelectCBMode(hHal,
+                      pHddApCtx->sapConfig.SapHw_mode,
+                      pHddApCtx->sapConfig.channel,
+                      pHddApCtx->sapConfig.sec_ch,
+                      &vht_channel_width, pHddApCtx->sapConfig.ch_width_orig);
+-    wlan_sap_set_vht_ch_width(pHddApCtx->sapContext, vht_channel_width);
+-    wlan_hdd_restart_sap(ap_adapter);
++        wlan_sap_set_vht_ch_width(pHddApCtx->sapContext, vht_channel_width);
++        wlan_hdd_restart_sap(ap_adapter);
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++    }
++#endif
+ }
+ #endif
+ 
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++
++void hdd_csa_notify_cb
++(
++   void *hdd_context,
++   void *indi_param
++)
++{
++   tpSmeCsaOffloadInd csa_params = NULL;
++   hdd_context_t      *hdd_ctxt = NULL;
++   struct wlan_sap_csa_info csa_info;
++   v_U32_t ret = 0;
++   /* Basic sanity */
++
++   if(!vos_is_ch_switch_with_csa_enabled())
++   {
++      VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_ERROR,
++                "%s : SAP channel switch with CSA not enabled", __func__);
++      return;
++   }
++
++   if (!hdd_context || !indi_param)
++   {
++      VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_ERROR,
++                "%s : Invalid arguments", __func__);
++      return;
++   }
++
++   hdd_ctxt    = (hdd_context_t *)hdd_context;
++
++   csa_params = (tpSmeCsaOffloadInd)indi_param;
++
++   VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO,
++             "%s : tbtt count %d Channel = %d",
++             __func__,csa_params->tbtt_count, csa_params->channel);
++   hdd_ctxt->ch_switch_ctx.tbtt_count = csa_params->tbtt_count - 1;  /* Will reduce the count by 1, 
++									as the switch might take time.
++									Currently of No Use, as this will be 
++									override by ini g_sap_chanswitch_beacon_cnt */	
++   csa_info.sta_channel = csa_params->channel;
++   ret = hdd_sta_state_sap_notify(hdd_ctxt, STA_NOTIFY_CSA, csa_info);
++   if(ret != 0)
++   {
++        VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_ERROR,
++          "%s : Failed to trigger Channel Switch Ch:%d ret=%d",
++          __func__,csa_params->channel, ret);
++   }
++}
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++
+ /**
+  * wlan_hdd_check_custom_con_channel_rules() - This function checks the sap's
+  *                                             and sta's operating channel.
+diff --git a/CORE/HDD/src/wlan_hdd_p2p.c b/CORE/HDD/src/wlan_hdd_p2p.c
+index 363d1a1..5cfad0d 100644
+--- a/CORE/HDD/src/wlan_hdd_p2p.c
++++ b/CORE/HDD/src/wlan_hdd_p2p.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012-2017 The Linux Foundation. All rights reserved.
++ * Copyright (c) 2012-2018 The Linux Foundation. All rights reserved.
+  *
+  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
+  *
+@@ -2965,6 +2965,25 @@ struct wireless_dev* __wlan_hdd_add_virtual_intf(
+         hddLog(VOS_TRACE_LEVEL_ERROR,"%s: hdd_open_adapter failed",__func__);
+         return ERR_PTR(-ENOSPC);
+     }
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++    if(pAdapter->device_mode == WLAN_HDD_SOFTAP)
++    {
++	    if(pHddCtx->ch_switch_ctx.chan_sw_timer_initialized == VOS_FALSE)
++	    {
++		    //Initialize the channel switch timer
++		    ret = vos_timer_init(&pHddCtx->ch_switch_ctx.hdd_ap_chan_switch_timer, VOS_TIMER_TYPE_SW,
++				    hdd_hostapd_chan_switch_cb, (v_PVOID_t)pAdapter);
++		    if(!VOS_IS_STATUS_SUCCESS(ret))
++		    {
++			    hddLog(LOGE, FL("Failed to initialize AP channel switch timer!!\n"));
++			    EXIT();
++			    return ERR_PTR(ret);
++		    }
++		    pHddCtx->ch_switch_ctx.chan_sw_timer_initialized = VOS_TRUE;
++	    }
++    }
++#endif //WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++
+     EXIT();
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0)) || defined(WITH_BACKPORTS)
+     return pAdapter->dev->ieee80211_ptr;
+diff --git a/CORE/MAC/inc/sirApi.h b/CORE/MAC/inc/sirApi.h
+index 0b50aee..a0a7d53 100644
+--- a/CORE/MAC/inc/sirApi.h
++++ b/CORE/MAC/inc/sirApi.h
+@@ -3186,6 +3186,10 @@ typedef struct sSmeCsaOffloadInd
+     tANI_U16    mesgType;    // eWNI_SME_CSA_OFFLOAD_EVENT
+     tANI_U16    mesgLen;
+     tSirMacAddr bssId;       // BSSID
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++    tANI_U16    channel;
++    tANI_U16    tbtt_count;
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+ } tSmeCsaOffloadInd, *tpSmeCsaOffloadInd;
+ 
+ /// WOW related structures
+@@ -5259,6 +5263,9 @@ typedef struct sSirDfsCsaIeRequest
+     uint8_t  ch_switch_mode;
+     uint8_t  dfs_ch_switch_disable;
+     uint8_t  sub20_switch_mode;
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++    tANI_U8  csaSwitchCount;
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+ }tSirDfsCsaIeRequest, *tpSirDfsCsaIeRequest;
+ 
+ /* Indication from lower layer indicating the completion of first beacon send
+diff --git a/CORE/MAC/src/pe/lim/limSendSmeRspMessages.c b/CORE/MAC/src/pe/lim/limSendSmeRspMessages.c
+index e00b4e6..2603df2 100644
+--- a/CORE/MAC/src/pe/lim/limSendSmeRspMessages.c
++++ b/CORE/MAC/src/pe/lim/limSendSmeRspMessages.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012-2017 The Linux Foundation. All rights reserved.
++ * Copyright (c) 2012-2018 The Linux Foundation. All rights reserved.
+  *
+  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
+  *
+@@ -3119,6 +3119,10 @@ void limHandleCSAoffloadMsg(tpAniSirGlobal pMac,tpSirMsgQ MsgQ)
+       mmhMsg.type = eWNI_SME_CSA_OFFLOAD_EVENT;
+       mmhMsg.bodyptr = pCsaOffloadInd;
+       mmhMsg.bodyval = 0;
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++      pCsaOffloadInd->tbtt_count = csa_params->csa_tbtt_count;
++      pCsaOffloadInd->channel = csa_params->channel;
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+       PELOG1(limLog(pMac, LOG1, FL("Sending eWNI_SME_CSA_OFFLOAD_EVENT to SME. "));)
+       MTRACE(macTraceMsgTx(pMac, psessionEntry->peSessionId, mmhMsg.type));
+       limDiagEventReport(pMac, WLAN_PE_DIAG_SWITCH_CHL_REQ_EVENT, psessionEntry,
+diff --git a/CORE/SAP/inc/sapApi.h b/CORE/SAP/inc/sapApi.h
+index 1c34ba5..9cc3f09 100644
+--- a/CORE/SAP/inc/sapApi.h
++++ b/CORE/SAP/inc/sapApi.h
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012-2017 The Linux Foundation. All rights reserved.
++ * Copyright (c) 2012-2018 The Linux Foundation. All rights reserved.
+  *
+  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
+  *
+@@ -194,6 +194,9 @@ typedef enum {
+     eSAP_ACS_SCAN_SUCCESS_EVENT,
+     eSAP_ACS_CHANNEL_SELECTED,
+     eSAP_ECSA_CHANGE_CHAN_IND,
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++    eSAP_CHANNEL_SWITCH_NOTIFICATION,
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+ } eSapHddEvent;
+ 
+ typedef enum {
+@@ -739,6 +742,9 @@ typedef struct sSapDfsInfo
+     bool               dfs_beacon_tx_enhanced;
+     uint16_t           reduced_beacon_interval;
+     enum sub20_chan_switch_mode  sub20_switch_mode;
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++    v_U8_t              csaSwitchCount;
++#endif
+ } tSapDfsInfo;
+ 
+ typedef struct tagSapCtxList
+diff --git a/CORE/SERVICES/WMA/wma.c b/CORE/SERVICES/WMA/wma.c
+index f99ad45..7c20817 100644
+--- a/CORE/SERVICES/WMA/wma.c
++++ b/CORE/SERVICES/WMA/wma.c
+@@ -7131,11 +7131,17 @@ static int wma_csa_offload_handler(void *handle, u_int8_t *event, u_int32_t len)
+ 		csa_ie = (struct ieee80211_channelswitch_ie *)(&csa_event->csa_ie[0]);
+ 		csa_offload_event->channel = csa_ie->newchannel;
+ 		csa_offload_event->switchmode = csa_ie->switchmode;
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++		csa_offload_event->csa_tbtt_count = csa_ie->tbttcount;
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+ 	} else if (csa_event->ies_present_flag & WMI_XCSA_IE_PRESENT) {
+ 		xcsa_ie = (struct ieee80211_extendedchannelswitch_ie*)(&csa_event->xcsa_ie[0]);
+ 		csa_offload_event->channel = xcsa_ie->newchannel;
+ 		csa_offload_event->switchmode = xcsa_ie->switchmode;
+ 		csa_offload_event->new_op_class = xcsa_ie->newClass;
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++		csa_offload_event->csa_tbtt_count = xcsa_ie->tbttcount;
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+ 	} else {
+ 		WMA_LOGE("CSA Event error: No CSA IE present");
+ 		vos_mem_free(csa_offload_event);
+diff --git a/CORE/SME/inc/csrApi.h b/CORE/SME/inc/csrApi.h
+index 6b0b7a7..6327dae 100644
+--- a/CORE/SME/inc/csrApi.h
++++ b/CORE/SME/inc/csrApi.h
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2011-2017 The Linux Foundation. All rights reserved.
++ * Copyright (c) 2011-2018 The Linux Foundation. All rights reserved.
+  *
+  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
+  *
+@@ -1406,6 +1406,9 @@ typedef struct tagCsrConfigParam
+ #ifdef WLAN_FEATURE_FILS_SK
+     uint8_t fils_max_chan_guard_time;
+ #endif
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++    tANI_U32    sap_ch_switch_with_csa;
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+ }tCsrConfigParam;
+ 
+ //Tush
+diff --git a/CORE/SME/inc/smeInternal.h b/CORE/SME/inc/smeInternal.h
+index d63c9a9..0b5adb6 100644
+--- a/CORE/SME/inc/smeInternal.h
++++ b/CORE/SME/inc/smeInternal.h
+@@ -266,6 +266,10 @@ typedef struct tagSmeStruct
+     void (*stats_ext2_cb)(void *, struct stats_ext2_event *);
+     void (*chip_power_save_fail_cb)(void *,
+ 			struct chip_pwr_save_fail_detected_params *);
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++    /*call back to indicate CSA notification received on STA interfce to SAP*/
++    void (*pCSASAPIndCb) (void * hdd_context, void *indi_param);
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+ } tSmeStruct, *tpSmeStruct;
+ 
+ 
+diff --git a/CORE/SME/inc/sme_Api.h b/CORE/SME/inc/sme_Api.h
+index 777f7eb..3383f34 100644
+--- a/CORE/SME/inc/sme_Api.h
++++ b/CORE/SME/inc/sme_Api.h
+@@ -4524,6 +4524,14 @@ eHalStatus sme_set_tsfcb(tHalHandle hHal,
+ VOS_STATUS sme_apfind_set_cmd(struct sme_ap_find_request_req *input);
+ #endif /* WLAN_FEATURE_APFIND */
+ 
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++eHalStatus sme_AddCSAIndCallback
++(
++   tHalHandle hHal,
++   void (*pCallbackfn)(void *pAdapter, void *CSAindParam)
++);
++#endif//#ifdef
++
+ /**
+  * sme_enable_disable_mas() - Function to set MAS value to UMAC
+  * @val:        1-Enable, 0-Disable
+diff --git a/CORE/SME/src/csr/csrUtil.c b/CORE/SME/src/csr/csrUtil.c
+index b29c367..2d4b90d 100644
+--- a/CORE/SME/src/csr/csrUtil.c
++++ b/CORE/SME/src/csr/csrUtil.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2011-2017 The Linux Foundation. All rights reserved.
++ * Copyright (c) 2011-2018 The Linux Foundation. All rights reserved.
+  *
+  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
+  *
+@@ -44,7 +44,9 @@
+ #include "smeQosInternal.h"
+ #include "wlan_qct_wda.h"
+ #include "vos_utils.h"
+-
++#ifdef FEATURE_WLAN_MCC_TO_SCC_SWITCH
++#include "limApi.h"
++#endif
+ #if defined(FEATURE_WLAN_ESE) && !defined(FEATURE_WLAN_ESE_UPLOAD)
+ #include "csrEse.h"
+ #endif /* FEATURE_WLAN_ESE && !FEATURE_WLAN_ESE_UPLOAD*/
+@@ -1108,6 +1110,7 @@ tANI_BOOLEAN csr_find_sta_session_info(
+ 	tpAniSirGlobal pMac = PMAC_STRUCT( hHal );
+ 	tCsrRoamSession *pSession = NULL;
+ 	v_U8_t i = 0;
++	tpPESession psessionEntry;
+ 
+ 	for( i = 0; i < CSR_ROAM_SESSION_MAX; i++ ) {
+ 		if( !CSR_IS_SESSION_VALID( pMac, i ) )
+@@ -1121,8 +1124,21 @@ tANI_BOOLEAN csr_find_sta_session_info(
+ 				VOS_P2P_CLIENT_MODE)) &&
+ 			(pSession->connectState ==
+ 				eCSR_ASSOC_STATE_TYPE_INFRA_ASSOCIATED)) {
+-			info->och =
+-				pSession->connectedProfile.operationChannel;
++			if(vos_is_ch_switch_with_csa_enabled()){
++				psessionEntry = peFindSessionBySessionId(pMac,
++						pMac->lim.limTimers.gLimChannelSwitchTimer.sessionId);
++				if (psessionEntry && LIM_IS_STA_ROLE(psessionEntry)) {
++					info->och = psessionEntry->gLimChannelSwitch.primaryChannel;
++					smsLog(pMac, LOGP,
++						FL("SAP channel switch with CSA enabled (SAP new ch: %d)"), info->och);
++				}else{
++					info->och =
++						pSession->connectedProfile.operationChannel;
++				}
++			}else{
++				info->och =
++					pSession->connectedProfile.operationChannel;
++			}
+ 			csrGetChFromHTProfile(pMac,
+ 				&pSession->connectedProfile.HTProfile,
+ 				info->och, &info->cfreq, &info->hbw);
+diff --git a/CORE/SME/src/sme_common/sme_Api.c b/CORE/SME/src/sme_common/sme_Api.c
+index e6c6ae4..3912b33 100644
+--- a/CORE/SME/src/sme_common/sme_Api.c
++++ b/CORE/SME/src/sme_common/sme_Api.c
+@@ -3257,6 +3257,15 @@ eHalStatus sme_ProcessMsg(tHalHandle hHal, vos_msg_t* pMsg)
+           case eWNI_SME_CSA_OFFLOAD_EVENT:
+                if (pMsg->bodyptr)
+                {
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++                   /*Indicate to HostApd*/
++                   if(pMac->sme.pCSASAPIndCb)
++                   {
++                        VOS_TRACE(VOS_MODULE_ID_SME, VOS_TRACE_LEVEL_ERROR,
++                             "%s: CSA Notification to SAP", __func__);
++                        pMac->sme.pCSASAPIndCb(pMac->hHdd, pMsg->bodyptr);
++                   }
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+                    csrScanFlushBssEntry(pMac, pMsg->bodyptr);
+                    vos_mem_free(pMsg->bodyptr);
+                }
+@@ -17639,6 +17648,34 @@ VOS_STATUS sme_apfind_set_cmd(struct sme_ap_find_request_req *input)
+      return VOS_STATUS_SUCCESS;
+ }
+ #endif /* WLAN_FEATURE_APFIND */
++
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++eHalStatus sme_AddCSAIndCallback
++(
++   tHalHandle hHal,
++   void (*pCallbackfn)(void *pAdapter, void *CSAindParam)
++)
++{
++   eHalStatus          status    = eHAL_STATUS_SUCCESS;
++    tpAniSirGlobal      pMac      = PMAC_STRUCT(hHal);
++
++    VOS_TRACE(VOS_MODULE_ID_SME, VOS_TRACE_LEVEL_ERROR,
++              "%s: Plug in CSA Notify CB", __func__);
++
++    status = sme_AcquireGlobalLock(&pMac->sme);
++    if (eHAL_STATUS_SUCCESS == status)
++    {
++        if (NULL != pCallbackfn)
++        {
++           pMac->sme.pCSASAPIndCb = pCallbackfn;
++        }
++        sme_ReleaseGlobalLock(&pMac->sme);
++    }
++
++    return(status);
++
++}
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+ #ifdef FEATURE_WLAN_MCC_TO_SCC_SWITCH
+ /*
+  * sme_validate_sap_channel_switch() - validate target channel switch w.r.t
+diff --git a/CORE/SVC/external/wlan_nlink_common.h b/CORE/SVC/external/wlan_nlink_common.h
+index 0b3604c..220e845 100644
+--- a/CORE/SVC/external/wlan_nlink_common.h
++++ b/CORE/SVC/external/wlan_nlink_common.h
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2014-2016 The Linux Foundation. All rights reserved.
++ * Copyright (c) 2014-2018 The Linux Foundation. All rights reserved.
+  *
+  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
+  *
+@@ -222,5 +222,16 @@ enum wlan_tp_level {
+         WLAN_SVC_TP_MEDIUM,
+         WLAN_SVC_TP_HIGH,
+ };
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++typedef enum sta_sap_notifications
++{
++    STA_NOTIFY_DISCONNECTED,
++    STA_NOTIFY_CONNECTED,
++    STA_NOTIFY_CSA,
++}sta_sap_notifications;
+ 
++struct wlan_sap_csa_info {
++   uint32_t sta_channel;
++};
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+ #endif //WLAN_NLINK_COMMON_H__
+diff --git a/CORE/VOSS/inc/vos_api.h b/CORE/VOSS/inc/vos_api.h
+index dc7d90f..66aa196 100644
+--- a/CORE/VOSS/inc/vos_api.h
++++ b/CORE/VOSS/inc/vos_api.h
+@@ -437,5 +437,5 @@ bool vos_is_probe_rsp_offload_enabled(void);
+  *          true: monitor mode is on
+  */
+ bool vos_is_mon_enable(void);
+-
++v_BOOL_t vos_is_ch_switch_with_csa_enabled(void);
+ #endif // if !defined __VOS_API_H
+diff --git a/CORE/VOSS/src/vos_api.c b/CORE/VOSS/src/vos_api.c
+index 360237d..3d49c79 100644
+--- a/CORE/VOSS/src/vos_api.c
++++ b/CORE/VOSS/src/vos_api.c
+@@ -3320,3 +3320,24 @@ bool vos_is_mon_enable(void)
+ 
+ 	return phdd_ctx->is_mon_enable;
+ }
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++v_BOOL_t vos_is_ch_switch_with_csa_enabled(void)
++{
++   hdd_context_t *pHddCtx;
++
++   pHddCtx = (hdd_context_t*)(gpVosContext->pHDDContext);
++   if((NULL == pHddCtx) ||
++      (NULL == pHddCtx->cfg_ini))
++   {
++     VOS_TRACE( VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_FATAL,
++               "%s: Hdd Context is Null", __func__);
++     return FALSE;
++   }
++   return pHddCtx->cfg_ini->sap_ch_switch_with_csa;
++}
++#else
++v_BOOL_t vos_is_ch_switch_with_csa_enabled(void)
++{
++	return FALSE;
++}
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+diff --git a/CORE/WDA/inc/legacy/halMsgApi.h b/CORE/WDA/inc/legacy/halMsgApi.h
+index 0c3a8c7..cfe4984 100644
+--- a/CORE/WDA/inc/legacy/halMsgApi.h
++++ b/CORE/WDA/inc/legacy/halMsgApi.h
+@@ -1056,6 +1056,9 @@ typedef struct CSAOffloadParams {
+    tANI_U8 new_sub20_channelwidth;  /* 5MHz or 10Mhz channel width */
+    tANI_U32 ies_present_flag;   /* WMI_CSA_EVENT_IES_PRESENT_FLAG */
+    tSirMacAddr bssId;
++#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
++   tANI_U32 csa_tbtt_count;
++#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+ }*tpCSAOffloadParams, tCSAOffloadParams;
+ 
+ typedef void (*tpSetLinkStateCallback)(tpAniSirGlobal pMac, void *msgParam,
+diff --git a/Kbuild b/Kbuild
+index 1a906a1..57684d6 100644
+--- a/Kbuild
++++ b/Kbuild
+@@ -1080,7 +1080,8 @@ ifeq ($(CONFIG_QCA_WIFI_AUTOMOTIVE_CONC), y)
+ CDEFINES +=     -DWLAN_FEATURE_MBSSID \
+ 		-DFEATURE_WLAN_MCC_TO_SCC_SWITCH \
+ 		-DFEATURE_WLAN_CH_AVOID \
+-		-DFEATURE_WLAN_STA_AP_MODE_DFS_DISABLE
++		-DFEATURE_WLAN_STA_AP_MODE_DFS_DISABLE \
++		-DWLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+ endif
+ 
+ ifeq ($(CONFIG_QCA_WIFI_SDIO), 1)
+-- 
+1.9.1
+

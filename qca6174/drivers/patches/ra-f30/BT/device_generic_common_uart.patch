@@ -1,0 +1,78 @@
+diff --git a/BoardConfig.mk b/BoardConfig.mk
+index fef9278..ef82057 100644
+--- a/BoardConfig.mk
++++ b/BoardConfig.mk
+@@ -8,6 +8,9 @@ TARGET_BOARD_PLATFORM := android-x86
+ BOARD_HAVE_BLUETOOTH := true
+ BOARD_HAVE_BLUETOOTH_LINUX := true
+ 
++BOARD_HAVE_BLUETOOTH_QCOM := true
++BOARD_HAS_QCA_BT_ROME := true
++
+ BOARD_USE_LEGACY_UI := true
+ 
+ BOARD_SYSTEMIMAGE_PARTITION_SIZE = $(if $(MKSQUASHFS),0,1610612736)
+diff --git a/init.x86.rc b/init.x86.rc
+index bd6d033..84e2170 100644
+--- a/init.x86.rc
++++ b/init.x86.rc
+@@ -27,6 +27,46 @@ on post-fs-data
+     # Set indication (checked by vold) that we have finished this action
+     setprop vold.post_fs_data_done 1
+ 
++#LEA ++
++    # Bluetooth
++    chmod 0660 /sys/class/rfkill/rfkill1/state
++    chown bluetooth net_bt_stack /sys/class/rfkill/rfkill1/state
++    chown bluetooth net_bt_stack /sys/class/rfkill/rfkill1/type
++    chmod 0660 /sys/class/rfkill/rfkill0/state
++    chown bluetooth net_bt_stack /sys/class/rfkill/rfkill0/state
++    chown bluetooth net_bt_stack /sys/class/rfkill/rfkill0/type
++    chmod 0660 /sys/class/rfkill/rfkill2/state
++    chown bluetooth net_bt_stack /sys/class/rfkill/rfkill2/state
++    chown bluetooth net_bt_stack /sys/class/rfkill/rfkill2/type
++    chmod 0660 /sys/class/rfkill/rfkill3/state
++    chown bluetooth net_bt_stack /sys/class/rfkill/rfkill3/state
++    chown bluetooth net_bt_stack /sys/class/rfkill/rfkill3/type
++
++    chmod 0660 /dev/ttyUSB0
++    chown bluetooth net_bt_stack /dev/ttyUSB0
++    chown bluetooth net_bt /sys/class/rfkill/rfkill1/device/extldo
++    chmod 0660 /sys/class/rfkill/rfkill1/device/extldo
++    chown bluetooth net_bt /sys/class/rfkill/rfkill0/device/extldo
++    chmod 0660 /sys/class/rfkill/rfkill0/device/extldo
++    chown bluetooth net_bt /sys/class/rfkill/rfkill2/device/extldo
++    chmod 0660 /sys/class/rfkill/rfkill2/device/extldo
++    chown bluetooth net_bt /sys/class/rfkill/rfkill3/device/extldo
++    chmod 0660 /sys/class/rfkill/rfkill3/device/extldo
++ 
++service start_hci_filter /system/bin/wcnss_filter
++    class late_start
++    user bluetooth
++#    user root
++    group bluetooth system
++#    group bluetooth net_bt_admin
++    disabled
++
++on property:wc_transport.start_hci=true
++    start start_hci_filter
++
++on property:wc_transport.start_hci=false
++    stop start_hci_filter
++#LEA --
+ on boot
+     setprop ro.radio.use-ppp yes
+     setprop status.battery.state Slow
+diff --git a/ueventd.x86.rc b/ueventd.x86.rc
+index c88a243..65fa68b 100644
+--- a/ueventd.x86.rc
++++ b/ueventd.x86.rc
+@@ -1,6 +1,8 @@
+ /dev/ttyS*                0660  system        radio
+ /dev/ttyACM*              0660  system        radio
+ /dev/ttyUSB*              0660  radio         radio
++#LEA: On some Laptops eg: Dell Latitude E6430, dev/ttyUSB0 permission gets overwritten to radio on Host Sleep-Wake.
++/dev/ttyUSB0              0660  bluetooth     net_bt_stack
+ /dev/video*               0660  cameraserver  system
+ /dev/iio:device*          0660  system        system
+ 

@@ -1,0 +1,71 @@
+diff -Nuar a/device/generic/common/BoardConfig.mk b/device/generic/common/BoardConfig.mk
+index c3164ef..60c51bb 100644
+--- a/device/generic/common/BoardConfig.mk
++++ b/device/generic/common/BoardConfig.mk
+@@ -79,6 +79,23 @@ endif
+ 
+ BOARD_KERNEL_CMDLINE := root=/dev/ram0 androidboot.selinux=permissive $(if $(filter true,$(TARGET_USES_64_BIT_BINDER)),,vmalloc=192M)
+ TARGET_KERNEL_DIFFCONFIG := device/generic/common/selinux_diffconfig
++#BOARD_KERNEL_CMDLINE := root=/dev/ram0 androidboot.hardware=$(TARGET_PRODUCT)
++BOARD_HAS_QCOM_WLAN := true
++ifeq ($(BOARD_HAS_QCOM_WLAN), true)
++#BOARD_WLAN_DEVICE := qcwcn
++BOARD_WPA_SUPPLICANT_DRIVER := NL80211
++#BOARD_WPA_SUPPLICANT_PRIVATE_LIB := lib_driver_cmd_$(BOARD_WLAN_DEVICE)
++BOARD_HOSTAPD_DRIVER := NL80211
++#BOARD_HOSTAPD_PRIVATE_LIB := lib_driver_cmd_$(BOARD_WLAN_DEVICE)
++WIFI_DRIVER_MODULE_PATH := "/system/lib/modules/wlan.ko"
++WIFI_DRIVER_MODULE_NAME := "wlan"
++WIFI_DRIVER_MODULE_ARG := ""
++WPA_SUPPLICANT_VERSION := VER_0_8_X
++HOSTAPD_VERSION := VER_0_8_X
++WIFI_DRIVER_FW_PATH_STA := "sta"
++WIFI_DRIVER_FW_PATH_AP  := "ap"
++WIFI_DRIVER_FW_PATH_P2P := "p2p"
++endif
+ 
+ COMPATIBILITY_ENHANCEMENT_PACKAGE := true
+ PRC_COMPATIBILITY_PACKAGE := true
+diff -Nuar a/device/generic/common/device.mk b/device/generic/common/device.mk
+index 3764464..b510f20 100644
+--- a/device/generic/common/device.mk
++++ b/device/generic/common/device.mk
+@@ -70,6 +70,7 @@ PRODUCT_COPY_FILES += \
+     frameworks/native/data/etc/android.hardware.usb.accessory.xml:system/etc/permissions/android.hardware.usb.accessory.xml \
+     frameworks/native/data/etc/android.hardware.usb.host.xml:system/etc/permissions/android.hardware.usb.host.xml \
+     frameworks/native/data/etc/android.hardware.wifi.xml:system/etc/permissions/android.hardware.wifi.xml \
++    frameworks/native/data/etc/android.hardware.wifi.direct.xml:system/etc/permissions/android.hardware.wifi.direct.xml \
+     frameworks/native/data/etc/android.software.freeform_window_management.xml:system/etc/permissions/android.software.freeform_window_management.xml \
+     frameworks/native/data/etc/android.software.sip.voip.xml:system/etc/permissions/android.software.sip.voip.xml \
+     frameworks/native/data/etc/android.software.sip.xml:system/etc/permissions/android.software.sip.xml \
+diff -Nuar a/device/generic/common/init.x86.rc b/device/generic/common/init.x86.rc
+index 9a00eb5..491ac8a 100644
+--- a/device/generic/common/init.x86.rc
++++ b/device/generic/common/init.x86.rc
+@@ -46,8 +46,26 @@ on boot
+     setprop persist.sys.strictmode.disable 1
+     # workaround for h.265 slowness
+     setprop sys.media.vdec.drop 0
++    # set wifi.interface
++    setprop wifi.interface wlan0
++    setprop qcom.bluetooth.soc rome_usb
++
++service p2p_supplicant /system/bin/wpa_supplicant \
++    -ip2p0 -Dnl80211 -c/data/misc/wifi/p2p_supplicant.conf -N \
++    -iwlan0 -Dnl80211 -c/data/misc/wifi/wpa_supplicant.conf \
++    -O/data/misc/wifi/sockets -dd \
++    -e/data/misc/wifi/entropy.bin -g@android:wpa_wlan0
++    #   we will start as root and wpa_supplicant will switch to user wifi
++    #   after setting up the capabilities required for WEXT
++    #   user wifi
++    #   group wifi inet keystore
++    class main
++    socket wpa_wlan0 dgram 660 wifi wifi
++    disabled
++    oneshot
+ 
+ service wpa_supplicant /system/bin/wpa_supplicant -c/data/misc/wifi/wpa_supplicant.conf \
++    -ddddd \
+     -iwlan0 -Dnl80211 \
+     -O/data/misc/wifi/sockets \
+     -e/data/misc/wifi/entropy.bin -g@android:wpa_wlan0

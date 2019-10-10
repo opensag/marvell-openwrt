@@ -1,0 +1,9 @@
+diff --git a/alsa.mk b/alsa.mk
+index 3543934..6df7156 100644
+--- a/alsa.mk
++++ b/alsa.mk
+@@ -55,3 +55,4 @@ PRODUCT_PACKAGES := \
+ 	audio.usb.default \
+ 	audio_policy.default \
+ 	audio.r_submix.default \
++	libbthost_if \

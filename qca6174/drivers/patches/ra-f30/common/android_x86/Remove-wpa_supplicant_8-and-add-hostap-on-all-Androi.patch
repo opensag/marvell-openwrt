@@ -1,0 +1,62 @@
+From 6dbd2a06d0ce98f1ab0d25e56db128f1655e4964 Mon Sep 17 00:00:00 2001
+From: Suresh Kumar Gautam <sgkuma@codeaurora.org>
+Date: Mon, 11 Dec 2017 15:29:32 +0530
+Subject: [PATCH] Remove wpa_supplicant_8 and add hostap on all Android.mk
+ files.
+
+---
+ qcwcn/config/Android.mk               | 2 +-
+ qcwcn/wifi_hal/Android.mk             | 4 ++--
+ qcwcn/wpa_supplicant_8_lib/Android.mk | 2 +-
+ 3 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/qcwcn/config/Android.mk b/qcwcn/config/Android.mk
+index 1c1622d..3a9d11e 100644
+--- a/qcwcn/config/Android.mk
++++ b/qcwcn/config/Android.mk
+@@ -19,6 +19,6 @@ LOCAL_PATH := $(call my-dir)
+ 
+ WIFI_DRIVER_SOCKET_IFACE := wlan0
+ ifeq ($(strip $(WPA_SUPPLICANT_VERSION)),VER_0_8_X)
+-  include external/wpa_supplicant_8/wpa_supplicant/wpa_supplicant_conf.mk
++  include external/hostap/wpa_supplicant/wpa_supplicant_conf.mk
+ endif
+ #######################
+diff --git a/qcwcn/wifi_hal/Android.mk b/qcwcn/wifi_hal/Android.mk
+index 15d885d..634b8f0 100644
+--- a/qcwcn/wifi_hal/Android.mk
++++ b/qcwcn/wifi_hal/Android.mk
+@@ -30,7 +30,7 @@ LOCAL_C_INCLUDES += \
+ 	$(LOCAL_PATH) \
+ 	external/libnl/include \
+ 	$(call include-path-for, libhardware_legacy)/hardware_legacy \
+-	external/wpa_supplicant_8/src/drivers \
++	external/hostap/src/drivers \
+ 	$(TARGET_OUT_HEADERS)/libwpa_client \
+ 	$(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include
+ 
+@@ -86,7 +86,7 @@ LOCAL_C_INCLUDES += \
+ 	$(LOCAL_PATH) \
+ 	external/libnl/include \
+ 	$(call include-path-for, libhardware_legacy)/hardware_legacy \
+-	external/wpa_supplicant_8/src/drivers \
++	external/hostap/src/drivers \
+ 	$(TARGET_OUT_HEADERS)/libwpa_client \
+ 	$(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include
+ 
+diff --git a/qcwcn/wpa_supplicant_8_lib/Android.mk b/qcwcn/wpa_supplicant_8_lib/Android.mk
+index a573141..c360394 100644
+--- a/qcwcn/wpa_supplicant_8_lib/Android.mk
++++ b/qcwcn/wpa_supplicant_8_lib/Android.mk
+@@ -21,7 +21,7 @@ ifneq ($(BOARD_WPA_SUPPLICANT_DRIVER),)
+   CONFIG_DRIVER_$(BOARD_WPA_SUPPLICANT_DRIVER) := y
+ endif
+ 
+-WPA_SUPPL_DIR = external/wpa_supplicant_8
++WPA_SUPPL_DIR = external/hostap
+ WPA_SRC_FILE :=
+ 
+ include $(WPA_SUPPL_DIR)/wpa_supplicant/android.config
+-- 
+1.9.1
+

@@ -1,0 +1,2393 @@
+diff --git a/include/hardware/audio.h b/include/hardware/audio.h
+index 36bfa86..ab56565 100644
+--- a/include/hardware/audio.h
++++ b/include/hardware/audio.h
+@@ -112,6 +112,10 @@ __BEGIN_DECLS
+ /* Bluetooth SCO wideband */
+ #define AUDIO_PARAMETER_KEY_BT_SCO_WB "bt_wbs"
+ 
++
++/* Device state*/
++#define AUDIO_PARAMETER_KEY_DEV_SHUTDOWN "dev_shutdown"
++
+ /* Get a new HW synchronization source identifier.
+  * Return a valid source (positive integer) or AUDIO_HW_SYNC_INVALID if an error occurs
+  * or no HW sync is available. */
+@@ -253,7 +257,8 @@ typedef struct audio_stream audio_stream_t;
+ /* type of asynchronous write callback events. Mutually exclusive */
+ typedef enum {
+     STREAM_CBK_EVENT_WRITE_READY, /* non blocking write completed */
+-    STREAM_CBK_EVENT_DRAIN_READY  /* drain completed */
++    STREAM_CBK_EVENT_DRAIN_READY,  /* drain completed */
++    STREAM_CBK_EVENT_ERROR, /* stream hit some error, let AF take action */
+ } stream_callback_event_t;
+ 
+ typedef int (*stream_callback_t)(stream_callback_event_t event, void *param, void *cookie);
+diff --git a/include/hardware/audio_effect.h b/include/hardware/audio_effect.h
+index 41cd2e6..8a88414 100644
+--- a/include/hardware/audio_effect.h
++++ b/include/hardware/audio_effect.h
+@@ -150,6 +150,13 @@ typedef struct effect_descriptor_s {
+ //  | Effect offload supported  | 22        | 0 The effect cannot be offloaded to an audio DSP
+ //  |                           |           | 1 The effect can be offloaded to an audio DSP
+ //  +---------------------------+-----------+-----------------------------------
++//  | Process function not      | 23        | 0 The effect implements a process function.
++//  | implemented               |           | 1 The effect does not implement a process function:
++//  |                           |           |   enabling the effect has no impact on latency or
++//  |                           |           |   CPU load.
++//  |                           |           |   Effect implementations setting this flag do not have
++//  |                           |           |   to implement a process function.
++//  +---------------------------+-----------+-----------------------------------
+ 
+ // Insert mode
+ #define EFFECT_FLAG_TYPE_SHIFT          0
+@@ -240,6 +247,14 @@ typedef struct effect_descriptor_s {
+                                           << EFFECT_FLAG_OFFLOAD_SHIFT)
+ #define EFFECT_FLAG_OFFLOAD_SUPPORTED   (1 << EFFECT_FLAG_OFFLOAD_SHIFT)
+ 
++// Effect has no process indication
++#define EFFECT_FLAG_NO_PROCESS_SHIFT       (EFFECT_FLAG_OFFLOAD_SHIFT + \
++                                                    EFFECT_FLAG_OFFLOAD_SIZE)
++#define EFFECT_FLAG_NO_PROCESS_SIZE        1
++#define EFFECT_FLAG_NO_PROCESS_MASK        (((1 << EFFECT_FLAG_NO_PROCESS_SIZE) -1) \
++                                          << EFFECT_FLAG_NO_PROCESS_SHIFT)
++#define EFFECT_FLAG_NO_PROCESS          (1 << EFFECT_FLAG_NO_PROCESS_SHIFT)
++
+ #define EFFECT_MAKE_API_VERSION(M, m)  (((M)<<16) | ((m) & 0xFFFF))
+ #define EFFECT_API_VERSION_MAJOR(v)    ((v)>>16)
+ #define EFFECT_API_VERSION_MINOR(v)    ((m) & 0xFFFF)
+@@ -896,6 +911,9 @@ typedef struct effect_param_s {
+     char        data[];     // Start of Parameter + Value data
+ } effect_param_t;
+ 
++// Maximum effect_param_t size
++#define EFFECT_PARAM_SIZE_MAX       65536
++
+ // structure used by EFFECT_CMD_OFFLOAD command
+ typedef struct effect_offload_param_s {
+     bool isOffload;         // true if the playback thread the effect is attached to is offloaded
+diff --git a/include/hardware/bluetooth.h b/include/hardware/bluetooth.h
+index 5a03cf8..fa70dff 100644
+--- a/include/hardware/bluetooth.h
++++ b/include/hardware/bluetooth.h
+@@ -267,6 +267,7 @@ typedef struct
+ /** Bluetooth Out Of Band data for bonding */
+ typedef struct
+ {
++   uint8_t le_bt_dev_addr[7]; /* LE Bluetooth Device Address */
+    uint8_t c192[16]; /* Simple Pairing Hash C-192 */
+    uint8_t r192[16]; /* Simple Pairing Randomizer R-192 */
+    uint8_t c256[16]; /* Simple Pairing Hash C-256 */
+@@ -601,6 +602,8 @@ typedef struct {
+     void (*interop_database_add)(uint16_t feature, const bt_bdaddr_t *addr, size_t len);
+     /** BT stack Test interface */
+     const void* (*get_testapp_interface)(int test_app_profile);
++    /*Unified Wake up feature : Indicate sleep or wake*/
++    int (* unified_wakeup_sleep_ind) (uint8_t isSleep);
+ } bt_interface_t;
+ 
+ /** TODO: Need to add APIs for Service Discovery, Service authorization and
+diff --git a/include/hardware/bt_hf.h b/include/hardware/bt_hf.h
+index dbac061..9d257b0 100644
+--- a/include/hardware/bt_hf.h
++++ b/include/hardware/bt_hf.h
+@@ -169,7 +169,6 @@ typedef void (* bthf_bind_cmd_callback)(char* hf_ind, bthf_bind_type_t type, bt_
+  */
+ typedef void (* bthf_biev_cmd_callback)(char* hf_ind_val, bt_bdaddr_t *bd_addr);
+ 
+-
+ /** BT-HF callback structure. */
+ typedef struct {
+     /** set to sizeof(BtHfCallbacks) */
+diff --git a/include/hardware/context_hub.h b/include/hardware/context_hub.h
+index 99756cb..828f2dd 100644
+--- a/include/hardware/context_hub.h
++++ b/include/hardware/context_hub.h
+@@ -358,6 +358,27 @@ struct query_apps_request_t {
+  */
+ 
+ /**
++ * CONTEXT_HUB_OS_REBOOT
++ * Reboots context hub OS, restarts all the nanoApps.
++ * No reboot notification is sent to nanoApps; reboot happens immediately and
++ * unconditionally; all volatile FW state and any data is lost as a result
++ *
++ * Payload : none
++ *
++ * Response : status_response_t
++ *            On receipt of a successful response, it is
++ *               expected that
++ *
++ *               i) system reboot has completed;
++ *                  status contains reboot reason code (platform-specific)
++ *
++ * Unsolicited response:
++ *            System may send unsolicited response at any time;
++ *            this should be interpreted as FW reboot, and necessary setup
++ *            has to be done (same or similar to the setup done on system boot)
++ */
++
++/**
+  * All communication between the context hubs and the Context Hub Service is in
+  * the form of messages. Some message types are distinguished and their
+  * Semantics shall be well defined.
+@@ -372,6 +393,7 @@ typedef enum {
+     CONTEXT_HUB_UNLOAD_APP   = 4, // Unload a specified app
+     CONTEXT_HUB_QUERY_APPS   = 5, // Query for app(s) info on hub
+     CONTEXT_HUB_QUERY_MEMORY = 6, // Query for memory info
++    CONTEXT_HUB_OS_REBOOT    = 7, // Request to reboot context HUB OS
+ } hub_messages_e;
+ 
+ #define CONTEXT_HUB_TYPE_PRIVATE_MSG_BASE 0x00400
+diff --git a/include/hardware/gralloc.h b/include/hardware/gralloc.h
+index ef86f90..779915c 100644
+--- a/include/hardware/gralloc.h
++++ b/include/hardware/gralloc.h
+@@ -379,6 +379,38 @@ static inline int gralloc_close(struct alloc_device_t* device) {
+     return device->common.close(&device->common);
+ }
+ 
++/**
++ * map_usage_to_memtrack should be called after allocating a gralloc buffer.
++ *
++ * @param usage - it is the flag used when alloc function is called.
++ *
++ * This function maps the gralloc usage flags to appropriate memtrack bucket.
++ * GrallocHAL implementers and users should make an additional ION_IOCTL_TAG
++ * call using the memtrack tag returned by this function. This will help the
++ * in-kernel memtack to categorize the memory allocated by different processes
++ * according to their usage.
++ *
++ */
++static inline const char* map_usage_to_memtrack(uint32_t usage) {
++    usage &= GRALLOC_USAGE_ALLOC_MASK;
++
++    if ((usage & GRALLOC_USAGE_HW_CAMERA_WRITE) != 0) {
++        return "camera";
++    } else if ((usage & GRALLOC_USAGE_HW_VIDEO_ENCODER) != 0 ||
++            (usage & GRALLOC_USAGE_EXTERNAL_DISP) != 0) {
++        return "video";
++    } else if ((usage & GRALLOC_USAGE_HW_RENDER) != 0 ||
++            (usage & GRALLOC_USAGE_HW_TEXTURE) != 0) {
++        return "gl";
++    } else if ((usage & GRALLOC_USAGE_HW_CAMERA_READ) != 0) {
++        return "camera";
++    } else if ((usage & GRALLOC_USAGE_SW_READ_MASK) != 0 ||
++            (usage & GRALLOC_USAGE_SW_WRITE_MASK) != 0) {
++        return "cpu";
++    }
++    return "graphics";
++}
++
+ __END_DECLS
+ 
+ #endif  // ANDROID_GRALLOC_INTERFACE_H
+diff --git a/include/hardware/gralloc1.h b/include/hardware/gralloc1.h
+new file mode 100644
+index 0000000..58c0e33
+--- /dev/null
++++ b/include/hardware/gralloc1.h
+@@ -0,0 +1,887 @@
++/*
++ * Copyright 2015 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#ifndef ANDROID_HARDWARE_GRALLOC1_H
++#define ANDROID_HARDWARE_GRALLOC1_H
++
++#include <hardware/hardware.h>
++#include <system/window.h>
++
++__BEGIN_DECLS
++
++#define GRALLOC_MODULE_API_VERSION_1_0 HARDWARE_MODULE_API_VERSION(1, 0)
++#define GRALLOC_HARDWARE_MODULE_ID "gralloc"
++
++/*
++ * Enums
++ */
++
++typedef enum {
++    GRALLOC1_CAPABILITY_INVALID = 0,
++
++    /* If this capability is supported, then the outBuffers parameter to
++     * allocate may be NULL, which instructs the device to report whether the
++     * given allocation is possible or not. */
++    GRALLOC1_CAPABILITY_TEST_ALLOCATE = 1,
++    GRALLOC1_LAST_CAPABILITY = 1,
++} gralloc1_capability_t;
++
++typedef enum {
++    GRALLOC1_CONSUMER_USAGE_NONE = 0,
++    GRALLOC1_CONSUMER_USAGE_CPU_READ_NEVER = 0,
++    /* 1ULL << 0 */
++    GRALLOC1_CONSUMER_USAGE_CPU_READ = 1ULL << 1,
++    GRALLOC1_CONSUMER_USAGE_CPU_READ_OFTEN = 1ULL << 2 |
++            GRALLOC1_CONSUMER_USAGE_CPU_READ,
++    /* 1ULL << 3 */
++    /* 1ULL << 4 */
++    /* 1ULL << 5 */
++    /* 1ULL << 6 */
++    /* 1ULL << 7 */
++    GRALLOC1_CONSUMER_USAGE_GPU_TEXTURE = 1ULL << 8,
++    /* 1ULL << 9 */
++    /* 1ULL << 10 */
++    GRALLOC1_CONSUMER_USAGE_HWCOMPOSER = 1ULL << 11,
++    GRALLOC1_CONSUMER_USAGE_CLIENT_TARGET = 1ULL << 12,
++    /* 1ULL << 13 */
++    /* 1ULL << 14 */
++    GRALLOC1_CONSUMER_USAGE_CURSOR = 1ULL << 15,
++    GRALLOC1_CONSUMER_USAGE_VIDEO_ENCODER = 1ULL << 16,
++    /* 1ULL << 17 */
++    GRALLOC1_CONSUMER_USAGE_CAMERA = 1ULL << 18,
++    /* 1ULL << 19 */
++    GRALLOC1_CONSUMER_USAGE_RENDERSCRIPT = 1ULL << 20,
++
++    /* Indicates that the consumer may attach buffers to their end of the
++     * BufferQueue, which means that the producer may never have seen a given
++     * dequeued buffer before. May be ignored by the gralloc device. */
++    GRALLOC1_CONSUMER_USAGE_FOREIGN_BUFFERS = 1ULL << 21,
++
++    /* 1ULL << 22 */
++    /* 1ULL << 23 */
++    /* 1ULL << 24 */
++    /* 1ULL << 25 */
++    /* 1ULL << 26 */
++    /* 1ULL << 27 */
++
++    /* Bits reserved for implementation-specific usage flags */
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_0 = 1ULL << 28,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_1 = 1ULL << 29,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_2 = 1ULL << 30,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_3 = 1ULL << 31,
++
++    /* 1ULL << 32 */
++    /* 1ULL << 33 */
++    /* 1ULL << 34 */
++    /* 1ULL << 35 */
++    /* 1ULL << 36 */
++    /* 1ULL << 37 */
++    /* 1ULL << 38 */
++    /* 1ULL << 39 */
++    /* 1ULL << 40 */
++    /* 1ULL << 41 */
++    /* 1ULL << 42 */
++    /* 1ULL << 43 */
++    /* 1ULL << 44 */
++    /* 1ULL << 45 */
++    /* 1ULL << 46 */
++    /* 1ULL << 47 */
++
++    /* Bits reserved for implementation-specific usage flags */
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_19 = 1ULL << 48,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_18 = 1ULL << 49,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_17 = 1ULL << 50,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_16 = 1ULL << 51,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_15 = 1ULL << 52,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_14 = 1ULL << 53,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_13 = 1ULL << 54,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_12 = 1ULL << 55,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_11 = 1ULL << 56,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_10 = 1ULL << 57,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_9 = 1ULL << 58,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_8 = 1ULL << 59,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_7 = 1ULL << 60,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_6 = 1ULL << 61,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_5 = 1ULL << 62,
++    GRALLOC1_CONSUMER_USAGE_PRIVATE_4 = 1ULL << 63,
++} gralloc1_consumer_usage_t;
++
++typedef enum {
++    GRALLOC1_FUNCTION_INVALID = 0,
++    GRALLOC1_FUNCTION_DUMP = 1,
++    GRALLOC1_FUNCTION_CREATE_DESCRIPTOR = 2,
++    GRALLOC1_FUNCTION_DESTROY_DESCRIPTOR = 3,
++    GRALLOC1_FUNCTION_SET_CONSUMER_USAGE = 4,
++    GRALLOC1_FUNCTION_SET_DIMENSIONS = 5,
++    GRALLOC1_FUNCTION_SET_FORMAT = 6,
++    GRALLOC1_FUNCTION_SET_PRODUCER_USAGE = 7,
++    GRALLOC1_FUNCTION_GET_BACKING_STORE = 8,
++    GRALLOC1_FUNCTION_GET_CONSUMER_USAGE = 9,
++    GRALLOC1_FUNCTION_GET_DIMENSIONS = 10,
++    GRALLOC1_FUNCTION_GET_FORMAT = 11,
++    GRALLOC1_FUNCTION_GET_PRODUCER_USAGE = 12,
++    GRALLOC1_FUNCTION_GET_STRIDE = 13,
++    GRALLOC1_FUNCTION_ALLOCATE = 14,
++    GRALLOC1_FUNCTION_RETAIN = 15,
++    GRALLOC1_FUNCTION_RELEASE = 16,
++    GRALLOC1_FUNCTION_GET_NUM_FLEX_PLANES = 17,
++    GRALLOC1_FUNCTION_LOCK = 18,
++    GRALLOC1_FUNCTION_LOCK_FLEX = 19,
++    GRALLOC1_FUNCTION_UNLOCK = 20,
++    GRALLOC1_LAST_FUNCTION = 20,
++} gralloc1_function_descriptor_t;
++
++typedef enum {
++    GRALLOC1_ERROR_NONE = 0,
++    GRALLOC1_ERROR_BAD_DESCRIPTOR = 1,
++    GRALLOC1_ERROR_BAD_HANDLE = 2,
++    GRALLOC1_ERROR_BAD_VALUE = 3,
++    GRALLOC1_ERROR_NOT_SHARED = 4,
++    GRALLOC1_ERROR_NO_RESOURCES = 5,
++    GRALLOC1_ERROR_UNDEFINED = 6,
++    GRALLOC1_ERROR_UNSUPPORTED = 7,
++} gralloc1_error_t;
++
++typedef enum {
++    GRALLOC1_PRODUCER_USAGE_NONE = 0,
++    GRALLOC1_PRODUCER_USAGE_CPU_WRITE_NEVER = 0,
++    /* 1ULL << 0 */
++    GRALLOC1_PRODUCER_USAGE_CPU_READ = 1ULL << 1,
++    GRALLOC1_PRODUCER_USAGE_CPU_READ_OFTEN = 1ULL << 2 |
++            GRALLOC1_PRODUCER_USAGE_CPU_READ,
++    /* 1ULL << 3 */
++    /* 1ULL << 4 */
++    GRALLOC1_PRODUCER_USAGE_CPU_WRITE = 1ULL << 5,
++    GRALLOC1_PRODUCER_USAGE_CPU_WRITE_OFTEN = 1ULL << 6 |
++            GRALLOC1_PRODUCER_USAGE_CPU_WRITE,
++    /* 1ULL << 7 */
++    /* 1ULL << 8 */
++    GRALLOC1_PRODUCER_USAGE_GPU_RENDER_TARGET = 1ULL << 9,
++    /* 1ULL << 10 */
++    /* 1ULL << 11 */
++    /* 1ULL << 12 */
++    /* 1ULL << 13 */
++
++    /* The consumer must have a hardware-protected path to an external display
++     * sink for this buffer. If a hardware-protected path is not available, then
++     * do not attempt to display this buffer. */
++    GRALLOC1_PRODUCER_USAGE_PROTECTED = 1ULL << 14,
++
++    /* 1ULL << 15 */
++    /* 1ULL << 16 */
++    GRALLOC1_PRODUCER_USAGE_CAMERA = 1ULL << 17,
++    /* 1ULL << 18 */
++    /* 1ULL << 19 */
++    /* 1ULL << 20 */
++    /* 1ULL << 21 */
++    GRALLOC1_PRODUCER_USAGE_VIDEO_DECODER = 1ULL << 22,
++    /* 1ULL << 23 */
++    /* 1ULL << 24 */
++    /* 1ULL << 25 */
++    /* 1ULL << 26 */
++    /* 1ULL << 27 */
++
++    /* Bits reserved for implementation-specific usage flags */
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_0 = 1ULL << 28,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_1 = 1ULL << 29,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_2 = 1ULL << 30,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_3 = 1ULL << 31,
++
++    /* 1ULL << 32 */
++    /* 1ULL << 33 */
++    /* 1ULL << 34 */
++    /* 1ULL << 35 */
++    /* 1ULL << 36 */
++    /* 1ULL << 37 */
++    /* 1ULL << 38 */
++    /* 1ULL << 39 */
++    /* 1ULL << 40 */
++    /* 1ULL << 41 */
++    /* 1ULL << 42 */
++    /* 1ULL << 43 */
++    /* 1ULL << 44 */
++    /* 1ULL << 45 */
++    /* 1ULL << 46 */
++    /* 1ULL << 47 */
++
++    /* Bits reserved for implementation-specific usage flags */
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_19 = 1ULL << 48,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_18 = 1ULL << 49,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_17 = 1ULL << 50,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_16 = 1ULL << 51,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_15 = 1ULL << 52,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_14 = 1ULL << 53,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_13 = 1ULL << 54,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_12 = 1ULL << 55,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_11 = 1ULL << 56,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_10 = 1ULL << 57,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_9 = 1ULL << 58,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_8 = 1ULL << 59,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_7 = 1ULL << 60,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_6 = 1ULL << 61,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_5 = 1ULL << 62,
++    GRALLOC1_PRODUCER_USAGE_PRIVATE_4 = 1ULL << 63,
++} gralloc1_producer_usage_t;
++
++/*
++ * Typedefs
++ */
++
++typedef void (*gralloc1_function_pointer_t)();
++
++typedef uint64_t gralloc1_backing_store_t;
++typedef uint64_t gralloc1_buffer_descriptor_t;
++
++/*
++ * Device Struct
++ */
++
++typedef struct gralloc1_device {
++    /* Must be the first member of this struct, since a pointer to this struct
++     * will be generated by casting from a hw_device_t* */
++    struct hw_device_t common;
++
++    /* getCapabilities(..., outCount, outCapabilities)
++     *
++     * Provides a list of capabilities (described in the definition of
++     * gralloc1_capability_t above) supported by this device. This list must not
++     * change after the device has been loaded.
++     *
++     * Parameters:
++     *   outCount - if outCapabilities was NULL, the number of capabilities
++     *       which would have been returned; if outCapabilities was not NULL,
++     *       the number of capabilities returned, which must not exceed the
++     *       value stored in outCount prior to the call
++     *   outCapabilities - a list of capabilities supported by this device; may
++     *       be NULL, in which case this function must write into outCount the
++     *       number of capabilities which would have been written into
++     *       outCapabilities
++     */
++    void (*getCapabilities)(struct gralloc1_device* device, uint32_t* outCount,
++            int32_t* /*gralloc1_capability_t*/ outCapabilities);
++
++    /* getFunction(..., descriptor)
++     *
++     * Returns a function pointer which implements the requested description.
++     *
++     * Parameters:
++     *   descriptor - the function to return
++     *
++     * Returns either a function pointer implementing the requested descriptor
++     *   or NULL if the described function is not supported by this device.
++     */
++    gralloc1_function_pointer_t (*getFunction)(struct gralloc1_device* device,
++            int32_t /*gralloc1_function_descriptor_t*/ descriptor);
++} gralloc1_device_t;
++
++static inline int gralloc1_open(const struct hw_module_t* module,
++        gralloc1_device_t** device) {
++    return module->methods->open(module, GRALLOC_HARDWARE_MODULE_ID,
++            (struct hw_device_t**) device);
++}
++
++static inline int gralloc1_close(gralloc1_device_t* device) {
++    return device->common.close(&device->common);
++}
++
++/* dump(..., outSize, outBuffer)
++ * Function descriptor: GRALLOC1_FUNCTION_DUMP
++ * Must be provided by all gralloc1 devices
++ *
++ * Retrieves implementation-defined debug information, which will be displayed
++ * during, for example, `dumpsys SurfaceFlinger`.
++ *
++ * If called with outBuffer == NULL, the device should store a copy of the
++ * desired output and return its length in bytes in outSize. If the device
++ * already has a stored copy, that copy should be purged and replaced with a
++ * fresh copy.
++ *
++ * If called with outBuffer != NULL, the device should copy its stored version
++ * of the output into outBuffer and store how many bytes of data it copied into
++ * outSize. Prior to this call, the client will have populated outSize with the
++ * maximum number of bytes outBuffer can hold. The device must not write more
++ * than this amount into outBuffer. If the device does not currently have a
++ * stored copy, then it should return 0 in outSize.
++ *
++ * Any data written into outBuffer need not be null-terminated.
++ *
++ * Parameters:
++ *   outSize - if outBuffer was NULL, the number of bytes needed to copy the
++ *       device's stored output; if outBuffer was not NULL, the number of bytes
++ *       written into it, which must not exceed the value stored in outSize
++ *       prior to the call; pointer will be non-NULL
++ *   outBuffer - the buffer to write the dump output into; may be NULL as
++ *       described above; data written into this buffer need not be
++ *       null-terminated
++ */
++typedef void (*GRALLOC1_PFN_DUMP)(gralloc1_device_t* device, uint32_t* outSize,
++        char* outBuffer);
++
++/*
++ * Buffer descriptor lifecycle functions
++ *
++ * All of these functions take as their first parameter a device pointer, so
++ * this parameter is omitted from the described parameter lists.
++ */
++
++/* createDescriptor(..., outDescriptor)
++ * Function descriptor: GRALLOC1_FUNCTION_CREATE_DESCRIPTOR
++ * Must be provided by all gralloc1 devices
++ *
++ * Creates a new, empty buffer descriptor.
++ *
++ * Parameters:
++ *   outDescriptor - the new buffer descriptor
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_NO_RESOURCES - no more descriptors can currently be created
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_CREATE_DESCRIPTOR)(
++        gralloc1_device_t* device, gralloc1_buffer_descriptor_t* outDescriptor);
++
++/* destroyDescriptor(..., descriptor)
++ * Function descriptor: GRALLOC1_FUNCTION_DESTROY_DESCRIPTOR
++ * Must be provided by all gralloc1 devices
++ *
++ * Destroys an existing buffer descriptor.
++ *
++ * Parameters:
++ *   descriptor - the buffer descriptor to destroy
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_DESCRIPTOR - descriptor does not refer to a valid
++ *       buffer descriptor
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_DESTROY_DESCRIPTOR)(
++        gralloc1_device_t* device, gralloc1_buffer_descriptor_t descriptor);
++
++/*
++ * Buffer descriptor modification functions
++ *
++ * All of these functions take as their first two parameters a device pointer
++ * and a buffer descriptor, so these parameters are omitted from the described
++ * parameter lists.
++ */
++
++/* setConsumerUsage(..., usage)
++ * Function descriptor: GRALLOC1_FUNCTION_SET_CONSUMER_USAGE
++ * Must be provided by all gralloc1 devices
++ *
++ * Sets the desired consumer usage flags of the buffer.
++ *
++ * Valid usage flags can be found in the definition of gralloc1_consumer_usage_t
++ * above.
++ *
++ * Parameters:
++ *   usage - the desired consumer usage flags
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_DESCRIPTOR - the buffer descriptor is invalid
++ *   GRALLOC1_ERROR_BAD_VALUE - an invalid usage flag was passed in
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_SET_CONSUMER_USAGE)(
++        gralloc1_device_t* device, gralloc1_buffer_descriptor_t descriptor,
++        uint64_t /*gralloc1_consumer_usage_t*/ usage);
++
++/* setDimensions(..., width, height)
++ * Function descriptor: GRALLOC1_FUNCTION_SET_DIMENSIONS
++ * Must be provided by all gralloc1 devices
++ *
++ * Sets the desired width and height of the buffer in pixels.
++ *
++ * The width specifies how many columns of pixels should be in the allocated
++ * buffer, but does not necessarily represent the offset in columns between the
++ * same column in adjacent rows. If this offset is required, consult getStride
++ * below.
++ *
++ * The height specifies how many rows of pixels should be in the allocated
++ * buffer.
++ *
++ * Parameters:
++ *   width - the desired width in pixels
++ *   height - the desired height in pixels
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_DESCRIPTOR - the buffer descriptor is invalid
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_SET_DIMENSIONS)(
++        gralloc1_device_t* device, gralloc1_buffer_descriptor_t descriptor,
++        uint32_t width, uint32_t height);
++
++/* setFormat(..., format)
++ * Function descriptor: GRALLOC1_FUNCTION_SET_FORMAT
++ * Must be provided by all gralloc1 devices
++ *
++ * Sets the desired format of the buffer.
++ *
++ * The valid formats can be found in <system/graphics.h>.
++ *
++ * Parameters:
++ *   format - the desired format
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_DESCRIPTOR - the buffer descriptor is invalid
++ *   GRALLOC1_ERROR_BAD_VALUE - format is invalid
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_SET_FORMAT)(
++        gralloc1_device_t* device, gralloc1_buffer_descriptor_t descriptor,
++        int32_t /*android_pixel_format_t*/ format);
++
++/* setProducerUsage(..., usage)
++ * Function descriptor: GRALLOC1_FUNCTION_SET_PRODUCER_USAGE
++ * Must be provided by all gralloc1 devices
++ *
++ * Sets the desired producer usage flags of the buffer.
++ *
++ * Valid usage flags can be found in the definition of gralloc1_producer_usage_t
++ * above.
++ *
++ * Parameters:
++ *   usage - the desired producer usage flags
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_DESCRIPTOR - the buffer descriptor is invalid
++ *   GRALLOC1_ERROR_BAD_VALUE - an invalid usage flag was passed in
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_SET_PRODUCER_USAGE)(
++        gralloc1_device_t* device, gralloc1_buffer_descriptor_t descriptor,
++        uint64_t /*gralloc1_producer_usage_t*/ usage);
++
++/*
++ * Buffer handle query functions
++ *
++ * All of these functions take as their first two parameters a device pointer
++ * and a buffer handle, so these parameters are omitted from the described
++ * parameter lists.
++ *
++ * [1] Currently many of these functions may return GRALLOC1_ERROR_UNSUPPORTED,
++ * which means that the device is not able to retrieve the requested information
++ * from the buffer. This is necessary to enable a smooth transition from earlier
++ * versions of the gralloc HAL, but gralloc1 implementers are strongly
++ * discouraged from returning this value, as future versions of the platform
++ * code will require all of these functions to succeed given a valid handle.
++ */
++
++/* getBackingStore(..., outStore)
++ * Function descriptor: GRALLOC1_FUNCTION_GET_BACKING_STORE
++ * Must be provided by all gralloc1 devices
++ *
++ * Gets a value that uniquely identifies the backing store of the given buffer.
++ *
++ * Buffers which share a backing store should return the same value from this
++ * function. If the buffer is present in more than one process, the backing
++ * store value for that buffer is not required to be the same in every process.
++ *
++ * Parameters:
++ *   outStore - the backing store identifier for this buffer
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_HANDLE - the buffer handle is invalid
++ *   GRALLOC1_ERROR_UNSUPPORTED - the device is unable to retrieve the
++ *       backing store identifier from the buffer; see note [1] in this
++ *       section's header for more information
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_GET_BACKING_STORE)(
++        gralloc1_device_t* device, buffer_handle_t buffer,
++        gralloc1_backing_store_t* outStore);
++
++/* getConsumerUsage(..., outUsage)
++ * Function descriptor: GRALLOC1_FUNCTION_GET_CONSUMER_USAGE
++ * Must be provided by all gralloc1 devices
++ *
++ * Gets the consumer usage flags which were used to allocate this buffer.
++ *
++ * Usage flags can be found in the definition of gralloc1_consumer_usage_t above
++ *
++ * Parameters:
++ *   outUsage - the consumer usage flags used to allocate this buffer; must be
++ *       non-NULL
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_HANDLE - the buffer handle is invalid
++ *   GRALLOC1_ERROR_UNSUPPORTED - the device is unable to retrieve the
++ *       dimensions from the buffer; see note [1] in this section's header for
++ *       more information
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_GET_CONSUMER_USAGE)(
++        gralloc1_device_t* device, buffer_handle_t buffer,
++        uint64_t* /*gralloc1_consumer_usage_t*/ outUsage);
++
++/* getDimensions(..., outWidth, outHeight)
++ * Function descriptor: GRALLOC1_FUNCTION_GET_DIMENSIONS
++ * Must be provided by all gralloc1 devices
++ *
++ * Gets the width and height of the buffer in pixels.
++ *
++ * See setDimensions for more information about these values.
++ *
++ * Parameters:
++ *   outWidth - the width of the buffer in pixels, must be non-NULL
++ *   outHeight - the height of the buffer in pixels, must be non-NULL
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_HANDLE - the buffer handle is invalid
++ *   GRALLOC1_ERROR_UNSUPPORTED - the device is unable to retrieve the
++ *       dimensions from the buffer; see note [1] in this section's header for
++ *       more information
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_GET_DIMENSIONS)(
++        gralloc1_device_t* device, buffer_handle_t buffer, uint32_t* outWidth,
++        uint32_t* outHeight);
++
++/* getFormat(..., outFormat)
++ * Function descriptor: GRALLOC1_FUNCTION_GET_FORMAT
++ * Must be provided by all gralloc1 devices
++ *
++ * Gets the format of the buffer.
++ *
++ * The valid formats can be found in the HAL_PIXEL_FORMAT_* enum in
++ * system/graphics.h.
++ *
++ * Parameters:
++ *   outFormat - the format of the buffer; must be non-NULL
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_HANDLE - the buffer handle is invalid
++ *   GRALLOC1_ERROR_UNSUPPORTED - the device is unable to retrieve the format
++ *       from the buffer; see note [1] in this section's header for more
++ *       information
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_GET_FORMAT)(
++        gralloc1_device_t* device, buffer_handle_t descriptor,
++        int32_t* outFormat);
++
++/* getProducerUsage(..., outUsage)
++ * Function descriptor: GRALLOC1_FUNCTION_GET_PRODUCER_USAGE
++ * Must be provided by all gralloc1 devices
++ *
++ * Gets the producer usage flags which were used to allocate this buffer.
++ *
++ * Usage flags can be found in the definition of gralloc1_producer_usage_t above
++ *
++ * Parameters:
++ *   outUsage - the producer usage flags used to allocate this buffer; must be
++ *       non-NULL
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_HANDLE - the buffer handle is invalid
++ *   GRALLOC1_ERROR_UNSUPPORTED - the device is unable to retrieve the usage
++ *       from the buffer; see note [1] in this section's header for more
++ *       information
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_GET_PRODUCER_USAGE)(
++        gralloc1_device_t* device, buffer_handle_t buffer,
++        uint64_t* /*gralloc1_producer_usage_t*/ outUsage);
++
++/* getStride(..., outStride)
++ * Function descriptor: GRALLOC1_FUNCTION_GET_STRIDE
++ * Must be provided by all gralloc1 devices
++ *
++ * Gets the stride of the buffer in pixels.
++ *
++ * The stride is the offset in pixel-sized elements between the same column in
++ * two adjacent rows of pixels. This may not be equal to the width of the
++ * buffer.
++ *
++ * Parameters:
++ *   outStride - the stride in pixels; must be non-NULL
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_HANDLE - the buffer handle is invalid
++ *   GRALLOC1_ERROR_UNDEFINED - the notion of a stride is not meaningful for
++ *       this format
++ *   GRALLOC1_ERROR_UNSUPPORTED - the device is unable to retrieve the stride
++ *       from the descriptor; see note [1] in this section's header for more
++ *       information
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_GET_STRIDE)(
++        gralloc1_device_t* device, buffer_handle_t buffer, uint32_t* outStride);
++
++/*
++ * Buffer management functions
++ */
++
++/* allocate(..., numDescriptors, descriptors, outBuffers)
++ * Function descriptor: GRALLOC1_FUNCTION_ALLOCATE
++ * Must be provided by all gralloc1 devices
++ *
++ * Attempts to allocate a number of buffers sharing a backing store.
++ *
++ * Each buffer will correspond to one of the descriptors passed into the
++ * function. If the device is unable to share the backing store between the
++ * buffers, it should attempt to allocate the buffers with different backing
++ * stores and return GRALLOC1_ERROR_NOT_SHARED if it is successful.
++ *
++ * If this call is successful, the client is responsible for freeing the
++ * buffer_handle_t using release() when it is finished with the buffer. It is
++ * not necessary to call retain() on the returned buffers, as they must have a
++ * reference added by the device before returning.
++ *
++ * If GRALLOC1_CAPABILITY_TEST_ALLOCATE is supported by this device, outBuffers
++ * may be NULL. In this case, the device must not attempt to allocate any
++ * buffers, but instead must return either GRALLOC1_ERROR_NONE if such an
++ * allocation is possible (ignoring potential resource contention which might
++ * lead to a GRALLOC1_ERROR_NO_RESOURCES error), GRALLOC1_ERROR_NOT_SHARED if
++ * the buffers can be allocated, but cannot share a backing store, or
++ * GRALLOC1_ERROR_UNSUPPORTED if one or more of the descriptors can never be
++ * allocated by the device.
++ *
++ * Parameters:
++ *   numDescriptors - the number of buffer descriptors, which must also be equal
++ *       to the size of the outBuffers array
++ *   descriptors - the buffer descriptors to attempt to allocate
++ *   outBuffers - the allocated buffers; must be non-NULL unless the device
++ *       supports GRALLOC1_CAPABILITY_TEST_ALLOCATE (see above), and must not be
++ *       modified by the device if allocation is unsuccessful
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_DESCRIPTOR - one of the descriptors does not refer to a
++ *      valid buffer descriptor
++ *   GRALLOC1_ERROR_NOT_SHARED - allocation was successful, but required more
++ *       than one backing store to satisfy all of the buffer descriptors
++ *   GRALLOC1_ERROR_NO_RESOURCES - allocation failed because one or more of the
++ *       backing stores could not be created at this time (but this allocation
++ *       might succeed at a future time)
++ *   GRALLOC1_ERROR_UNSUPPORTED - one or more of the descriptors can never be
++ *       satisfied by the device
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_ALLOCATE)(
++        gralloc1_device_t* device, uint32_t numDescriptors,
++        const gralloc1_buffer_descriptor_t* descriptors,
++        buffer_handle_t* outBuffers);
++
++/* retain(..., buffer)
++ * Function descriptor: GRALLOC1_FUNCTION_RETAIN
++ * Must be provided by all gralloc1 devices
++ *
++ * Adds a reference to the given buffer.
++ *
++ * This function must be called when a buffer_handle_t is received from a remote
++ * process to prevent the buffer's data from being freed when the remote process
++ * releases the buffer. It may also be called to increase the reference count if
++ * two components in the same process want to interact with the buffer
++ * independently.
++ *
++ * Parameters:
++ *   buffer - the buffer to which a reference should be added
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_HANDLE - the buffer handle is invalid
++ *   GRALLOC1_ERROR_NO_RESOURCES - it is not possible to add a reference to this
++ *       buffer at this time
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_RETAIN)(
++        gralloc1_device_t* device, buffer_handle_t buffer);
++
++/* release(..., buffer)
++ * Function descriptor: GRALLOC1_FUNCTION_RELEASE
++ * Must be provided by all gralloc1 devices
++ *
++ * Removes a reference from the given buffer.
++ *
++ * If no references remain, the buffer should be freed. When the last buffer
++ * referring to a particular backing store is freed, that backing store should
++ * also be freed.
++ *
++ * Parameters:
++ *   buffer - the buffer from which a reference should be removed
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_HANDLE - the buffer handle is invalid
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_RELEASE)(
++        gralloc1_device_t* device, buffer_handle_t buffer);
++
++/*
++ * Buffer access functions
++ *
++ * All of these functions take as their first parameter a device pointer, so
++ * this parameter is omitted from the described parameter lists.
++ */
++
++typedef struct gralloc1_rect {
++    int32_t left;
++    int32_t top;
++    int32_t width;
++    int32_t height;
++} gralloc1_rect_t;
++
++/* getNumFlexPlanes(..., buffer, outNumPlanes)
++ * Function descriptor: GRALLOC1_FUNCTION_GET_NUM_FLEX_PLANES
++ * Must be provided by all gralloc1 devices
++ *
++ * Returns the number of flex layout planes which are needed to represent the
++ * given buffer. This may be used to efficiently allocate only as many plane
++ * structures as necessary before calling into lockFlex.
++ *
++ * If the given buffer cannot be locked as a flex format, this function may
++ * return GRALLOC1_ERROR_UNSUPPORTED (as lockFlex would).
++ *
++ * Parameters:
++ *   buffer - the buffers for which the number of planes should be queried
++ *   outNumPlanes - the number of flex planes required to describe the given
++ *       buffer; must be non-NULL
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_HANDLE - the buffer handle is invalid
++ *   GRALLOC1_ERROR_UNSUPPORTED - the buffer's format cannot be represented in a
++ *       flex layout
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_GET_NUM_FLEX_PLANES)(
++        gralloc1_device_t* device, buffer_handle_t buffer,
++        uint32_t* outNumPlanes);
++
++/* lock(..., buffer, producerUsage, consumerUsage, accessRegion, outData,
++ *     acquireFence)
++ * Function descriptor: GRALLOC1_FUNCTION_LOCK
++ * Must be provided by all gralloc1 devices
++ *
++ * Locks the given buffer for the specified CPU usage.
++ *
++ * Exactly one of producerUsage and consumerUsage must be *_USAGE_NONE. The
++ * usage which is not *_USAGE_NONE must be one of the *_USAGE_CPU_* values, as
++ * applicable. Locking a buffer for a non-CPU usage is not supported.
++ *
++ * Locking the same buffer simultaneously from multiple threads is permitted,
++ * but if any of the threads attempt to lock the buffer for writing, the
++ * behavior is undefined, except that it must not cause process termination or
++ * block the client indefinitely. Leaving the buffer content in an indeterminate
++ * state or returning an error are both acceptable.
++ *
++ * The client must not modify the content of the buffer outside of accessRegion,
++ * and the device need not guarantee that content outside of accessRegion is
++ * valid for reading. The result of reading or writing outside of accessRegion
++ * is undefined, except that it must not cause process termination.
++ *
++ * outData must be a non-NULL pointer, the contents of which which will be
++ * filled with a pointer to the locked buffer memory. This address will
++ * represent the top-left corner of the entire buffer, even if accessRegion does
++ * not begin at the top-left corner.
++ *
++ * acquireFence is a file descriptor referring to a acquire sync fence object,
++ * which will be signaled when it is safe for the device to access the contents
++ * of the buffer (prior to locking). If it is already safe to access the buffer
++ * contents, -1 may be passed instead.
++ *
++ * Parameters:
++ *   buffer - the buffer to lock
++ *   producerUsage - the producer usage flags to request; either this or
++ *       consumerUsage must be GRALLOC1_*_USAGE_NONE, and the other must be a
++ *       CPU usage
++ *   consumerUsage - the consumer usage flags to request; either this or
++ *       producerUsage must be GRALLOC1_*_USAGE_NONE, and the other must be a
++ *       CPU usage
++ *   accessRegion - the portion of the buffer that the client intends to access;
++ *       must be non-NULL
++ *   outData - will be filled with a CPU-accessible pointer to the buffer data;
++ *       must be non-NULL
++ *   acquireFence - a sync fence file descriptor as described above
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_HANDLE - the buffer handle is invalid
++ *   GRALLOC1_ERROR_BAD_VALUE - neither or both of producerUsage and
++ *       consumerUsage were GRALLOC1_*_USAGE_NONE, or the usage which was not
++ *       *_USAGE_NONE was not a CPU usage
++ *   GRALLOC1_ERROR_NO_RESOURCES - the buffer cannot be locked at this time, but
++ *       locking may succeed at a future time
++ *   GRALLOC1_ERROR_UNSUPPORTED - the buffer cannot be locked with the given
++ *       usage, and any future attempts at locking will also fail
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_LOCK)(
++        gralloc1_device_t* device, buffer_handle_t buffer,
++        uint64_t /*gralloc1_producer_usage_t*/ producerUsage,
++        uint64_t /*gralloc1_consumer_usage_t*/ consumerUsage,
++        const gralloc1_rect_t* accessRegion, void** outData,
++        int32_t acquireFence);
++
++/* lockFlex(..., buffer, producerUsage, consumerUsage, accessRegion,
++ *     outFlexLayout, outAcquireFence)
++ * Function descriptor: GRALLOC1_FUNCTION_LOCK_FLEX
++ * Must be provided by all gralloc1 devices
++ *
++ * This is largely the same as lock(), except that instead of returning a
++ * pointer directly to the buffer data, it returns an android_flex_layout
++ * struct describing how to access the data planes.
++ *
++ * This function must work on buffers with HAL_PIXEL_FORMAT_YCbCr_*_888 if
++ * supported by the device, as well as with any other formats requested by
++ * multimedia codecs when they are configured with a flexible-YUV-compatible
++ * color format.
++ *
++ * This function may also be called on buffers of other formats, including
++ * non-YUV formats, but if the buffer format is not compatible with a flexible
++ * representation, it may return GRALLOC1_ERROR_UNSUPPORTED.
++ *
++ * Parameters:
++ *   buffer - the buffer to lock
++ *   producerUsage - the producer usage flags to request; either this or
++ *       consumerUsage must be GRALLOC1_*_USAGE_NONE, and the other must be a
++ *       CPU usage
++ *   consumerUsage - the consumer usage flags to request; either this or
++ *       producerUsage must be GRALLOC1_*_USAGE_NONE, and the other must be a
++ *       CPU usage
++ *   accessRegion - the portion of the buffer that the client intends to access;
++ *      must be non-NULL
++ *   outFlexLayout - will be filled with the description of the planes in the
++ *       buffer
++ *   acquireFence - a sync fence file descriptor as described in lock()
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_HANDLE - the buffer handle is invalid
++ *   GRALLOC1_ERROR_BAD_VALUE - neither or both of producerUsage and
++ *       consumerUsage were *_USAGE_NONE, or the usage which was not
++ *       *_USAGE_NONE was not a CPU usage
++ *   GRALLOC1_ERROR_NO_RESOURCES - the buffer cannot be locked at this time, but
++ *       locking may succeed at a future time
++ *   GRALLOC1_ERROR_UNSUPPORTED - the buffer cannot be locked with the given
++ *       usage, and any future attempts at locking will also fail
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_LOCK_FLEX)(
++        gralloc1_device_t* device, buffer_handle_t buffer,
++        uint64_t /*gralloc1_producer_usage_t*/ producerUsage,
++        uint64_t /*gralloc1_consumer_usage_t*/ consumerUsage,
++        const gralloc1_rect_t* accessRegion,
++        struct android_flex_layout* outFlexLayout, int32_t acquireFence);
++
++/* unlock(..., buffer, releaseFence)
++ * Function descriptor: GRALLOC1_FUNCTION_UNLOCK
++ * Must be provided by all gralloc1 devices
++ *
++ * This function indicates to the device that the client will be done with the
++ * buffer when releaseFence signals.
++ *
++ * outReleaseFence will be filled with a file descriptor referring to a release
++ * sync fence object, which will be signaled when it is safe to access the
++ * contents of the buffer (after the buffer has been unlocked). If it is already
++ * safe to access the buffer contents, then -1 may be returned instead.
++ *
++ * This function is used to unlock both buffers locked by lock() and those
++ * locked by lockFlex().
++ *
++ * Parameters:
++ *   buffer - the buffer to unlock
++ *   outReleaseFence - a sync fence file descriptor as described above
++ *
++ * Returns GRALLOC1_ERROR_NONE or one of the following errors:
++ *   GRALLOC1_ERROR_BAD_HANDLE - the buffer handle is invalid
++ */
++typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_UNLOCK)(
++        gralloc1_device_t* device, buffer_handle_t buffer,
++        int32_t* outReleaseFence);
++
++__END_DECLS
++
++#endif
+diff --git a/include/hardware/hw_auth_token.h b/include/hardware/hw_auth_token.h
+index f471d1a..3305f2c 100644
+--- a/include/hardware/hw_auth_token.h
++++ b/include/hardware/hw_auth_token.h
+@@ -23,7 +23,7 @@
+ extern "C" {
+ #endif  // __cplusplus
+ 
+-const uint8_t HW_AUTH_TOKEN_VERSION = 0;
++#define HW_AUTH_TOKEN_VERSION 0
+ 
+ typedef enum {
+     HW_AUTH_NONE = 0,
+diff --git a/include/hardware/hwcomposer2.h b/include/hardware/hwcomposer2.h
+index a51efd7..6973603 100644
+--- a/include/hardware/hwcomposer2.h
++++ b/include/hardware/hwcomposer2.h
+@@ -86,6 +86,12 @@ typedef enum {
+      * (such as position, size, etc.) need to be performed through the
+      * validate/present cycle. */
+     HWC2_CAPABILITY_SIDEBAND_STREAM = 1,
++
++    /* Specifies that the device will apply a color transform even when either
++     * the client or the device has chosen that all layers should be composed by
++     * the client. This will prevent the client from applying the color
++     * transform during its composition step. */
++    HWC2_CAPABILITY_SKIP_CLIENT_COLOR_TRANSFORM = 2,
+ } hwc2_capability_t;
+ 
+ /* Possible composition types for a given layer */
+@@ -325,6 +331,8 @@ static inline const char* getCapabilityName(hwc2_capability_t capability) {
+     switch (capability) {
+         case HWC2_CAPABILITY_INVALID: return "Invalid";
+         case HWC2_CAPABILITY_SIDEBAND_STREAM: return "SidebandStream";
++        case HWC2_CAPABILITY_SKIP_CLIENT_COLOR_TRANSFORM:
++                return "SkipClientColorTransform";
+         default: return "Unknown";
+     }
+ }
+@@ -540,6 +548,7 @@ TO_STRING(hwc2_callback_descriptor_t, Callback, getCallbackDescriptorName)
+ enum class Capability : int32_t {
+     Invalid = HWC2_CAPABILITY_INVALID,
+     SidebandStream = HWC2_CAPABILITY_SIDEBAND_STREAM,
++    SkipClientColorTransform = HWC2_CAPABILITY_SKIP_CLIENT_COLOR_TRANSFORM,
+ };
+ TO_STRING(hwc2_capability_t, Capability, getCapabilityName)
+ 
+@@ -1328,7 +1337,7 @@ typedef int32_t /*hwc2_error_t*/ (*HWC2_PFN_GET_RELEASE_FENCES)(
+         hwc2_device_t* device, hwc2_display_t display, uint32_t* outNumElements,
+         hwc2_layer_t* outLayers, int32_t* outFences);
+ 
+-/* presentDisplay(..., outRetireFence)
++/* presentDisplay(..., outPresentFence)
+  * Descriptor: HWC2_FUNCTION_PRESENT_DISPLAY
+  * Must be provided by all HWC2 devices
+  *
+@@ -1342,15 +1351,16 @@ typedef int32_t /*hwc2_error_t*/ (*HWC2_PFN_GET_RELEASE_FENCES)(
+  * setLayerBuffer), then it is safe to call this function without first
+  * validating the display.
+  *
+- * If this call succeeds, outRetireFence will be populated with a file
+- * descriptor referring to a retire sync fence object. For physical displays,
+- * this fence will be signaled when the result of composition of the prior frame
+- * is no longer necessary (because it has been copied or replaced by this
+- * frame). For virtual displays, this fence will be signaled when writes to the
+- * output buffer have completed and it is safe to read from it.
++ * If this call succeeds, outPresentFence will be populated with a file
++ * descriptor referring to a present sync fence object. For physical displays,
++ * this fence will be signaled at the vsync when the result of composition of
++ * this frame starts to appear (for video-mode panels) or starts to transfer to
++ * panel memory (for command-mode panels). For virtual displays, this fence will
++ * be signaled when writes to the output buffer have completed and it is safe to
++ * read from it.
+  *
+  * Parameters:
+- *   outRetireFence - a sync fence file descriptor as described above; pointer
++ *   outPresentFence - a sync fence file descriptor as described above; pointer
+  *       will be non-NULL
+  *
+  * Returns HWC2_ERROR_NONE or one of the following errors:
+@@ -1361,7 +1371,8 @@ typedef int32_t /*hwc2_error_t*/ (*HWC2_PFN_GET_RELEASE_FENCES)(
+  *       for this display
+  */
+ typedef int32_t /*hwc2_error_t*/ (*HWC2_PFN_PRESENT_DISPLAY)(
+-        hwc2_device_t* device, hwc2_display_t display, int32_t* outRetireFence);
++        hwc2_device_t* device, hwc2_display_t display,
++        int32_t* outPresentFence);
+ 
+ /* setActiveConfig(..., config)
+  * Descriptor: HWC2_FUNCTION_SET_ACTIVE_CONFIG
+@@ -1466,6 +1477,10 @@ typedef int32_t /*hwc2_error_t*/ (*HWC2_PFN_SET_COLOR_MODE)(
+  * the desired color transform, it should force all layers to client composition
+  * during validateDisplay.
+  *
++ * If HWC2_CAPABILITY_SKIP_CLIENT_COLOR_TRANSFORM is present, then the client
++ * will never apply the color transform during client composition, even if all
++ * layers are being composed by the client.
++ *
+  * The matrix provided is an affine color transformation of the following form:
+  *
+  * |r.r r.g r.b 0|
+diff --git a/include/hardware/keymaster1.h b/include/hardware/keymaster1.h
+index afd202c..079e5a0 100644
+--- a/include/hardware/keymaster1.h
++++ b/include/hardware/keymaster1.h
+@@ -530,6 +530,55 @@ struct keymaster1_device {
+      */
+     keymaster_error_t (*abort)(const struct keymaster1_device* dev,
+                                keymaster_operation_handle_t operation_handle);
++
++    /**
++     * Generates a pair of ATTK defined in SOTER. Save the private key into RPMB.
++     * Note that the ATTK generated will never be touched outside the keymaster.
++     *
++     * \param[in] dev The keymaster device structure.
++     *
++     * \param[in] copy_num The number of copies that will be saved in the RPMB.
++     */
++     keymaster_error_t (*generate_attk_key_pair)(const struct keymaster1_device* dev,
++                                                 const uint8_t copy_num);
++
++    /**
++     * Verify the existance ATTK defined in SOTER.
++     *
++     * \param[in] dev The keymaster device structure.
++     *
++     * Returns: 0 if the ATTK exists.
++     */
++     keymaster_error_t (*verify_attk_key_pair)(const struct keymaster1_device* dev);
++
++    /**
++     * Export the public key of ATTK in PEM format.
++     *
++     * \param[in] dev The keymaster device structure.
++     *
++     * \param[out] pub_key_data The public key data in X.509v3 format PEM encoded
++     *
++     * \param[out] pub_key_data_length The length of the public key data.
++     */
++     keymaster_error_t (*export_attk_public_key)(const struct keymaster1_device* dev,
++                                                 const uint8_t* pub_key_data,
++                                                 const size_t pub_key_data_length);
++
++    /**
++     * Get Unique device ID.
++     *
++     * \param[in] dev The keymaster device structure.
++     *
++     * \param[out] device_id The unique id for each device, format as below:
++     * 1.bytes 0-3: Identify each silicon provider id.
++     * 2.bytes 4-7: SoC model ID, defined by each silicon provider
++     * 3.bytes 8-15: Public Chip Serial *Number of SoC, defined by each silicon provider
++     *
++     * \param[out] device_id_length The length of the device id.
++     */
++     keymaster_error_t (*get_device_id)(const struct keymaster1_device* dev,
++                                        const uint8_t* device_id,
++                                        const size_t device_id_length);
+ };
+ typedef struct keymaster1_device keymaster1_device_t;
+ 
+diff --git a/include/hardware/keymaster_defs.h b/include/hardware/keymaster_defs.h
+index b45e785..65a69c4 100644
+--- a/include/hardware/keymaster_defs.h
++++ b/include/hardware/keymaster_defs.h
+@@ -148,6 +148,15 @@ typedef enum {
+     KM_TAG_RESET_SINCE_ID_ROTATION = KM_BOOL | 1004, /* Whether the device has beeen factory reset
+                                                         since the last unique ID rotation.  Used for
+                                                         key attestation. */
++    KM_TAG_SOTER_IS_FROM_SOTER = KM_BOOL | 11000,
++    KM_TAG_SOTER_IS_AUTO_SIGNED_WITH_ATTK_WHEN_GET_PUBLIC_KEY = KM_BOOL | 11001,
++    KM_TAG_SOTER_IS_AUTO_SIGNED_WITH_COMMON_KEY_WHEN_GET_PUBLIC_KEY = KM_BOOL| 11002,
++    KM_TAG_SOTER_AUTO_SIGNED_COMMON_KEY_WHEN_GET_PUBLIC_KEY = KM_BYTES | 11003,
++    KM_TAG_SOTER_AUTO_ADD_COUNTER_WHEN_GET_PUBLIC_KEY = KM_BOOL | 11004,
++    KM_TAG_SOTER_IS_SECMSG_FID_COUNTER_SIGNED_WHEN_SIGN = KM_BOOL | 11005,
++    KM_TAG_SOTER_USE_NEXT_ATTK = KM_BOOL | 11006,
++    KM_TAG_SOTER_UID = KM_UINT | 11007,
++    KM_TAG_SOTER_AUTO_SIGNED_COMMON_KEY_WHEN_GET_PUBLIC_KEY_BLOB = KM_BYTES | 11008,
+ } keymaster_tag_t;
+ 
+ /**
+@@ -432,6 +441,8 @@ typedef enum {
+     KM_ERROR_VERSION_MISMATCH = -101,
+ 
+     KM_ERROR_UNKNOWN_ERROR = -1000,
++
++    KM_ERROR_SOTER_ERROR = -10000,
+ } keymaster_error_t;
+ 
+ /* Convenience functions for manipulating keymaster tag types */
+@@ -518,7 +529,7 @@ inline keymaster_key_param_t keymaster_param_date(keymaster_tag_t tag, uint64_t
+ 
+ #define KEYMASTER_SIMPLE_COMPARE(a, b) (a < b) ? -1 : ((a > b) ? 1 : 0)
+ inline int keymaster_param_compare(const keymaster_key_param_t* a, const keymaster_key_param_t* b) {
+-    int retval = KEYMASTER_SIMPLE_COMPARE(a->tag, b->tag);
++    int retval = KEYMASTER_SIMPLE_COMPARE((uint32_t)a->tag, (uint32_t)b->tag);
+     if (retval != 0)
+         return retval;
+ 
+diff --git a/include/hardware/power.h b/include/hardware/power.h
+index c451d67..bd8216e 100644
+--- a/include/hardware/power.h
++++ b/include/hardware/power.h
+@@ -63,7 +63,9 @@ typedef enum {
+     POWER_HINT_VIDEO_DECODE = 0x00000004,
+     POWER_HINT_LOW_POWER = 0x00000005,
+     POWER_HINT_SUSTAINED_PERFORMANCE = 0x00000006,
+-    POWER_HINT_VR_MODE = 0x00000007
++    POWER_HINT_VR_MODE = 0x00000007,
++    POWER_HINT_LAUNCH = 0x00000008,
++    POWER_HINT_DISABLE_TOUCH = 0x00000009
+ } power_hint_t;
+ 
+ typedef enum {
+@@ -247,6 +249,14 @@ typedef struct power_module {
+      *     device can sustain it. The data parameter is non-zero when the mode
+      *     is activated and zero when deactivated.
+      *
++     * POWER_HINT_DISABLE_TOUCH
++     *
++     *     When device enters some special modes, e.g. theater mode in Android
++     *     Wear, there is no touch interaction expected between device and user.
++     *     Touch controller could be disabled in those modes to save power.
++     *     The data parameter is non-zero when touch could be disabled, and zero
++     *     when touch needs to be re-enabled.
++     *
+      * A particular platform may choose to ignore any hint.
+      *
+      * availability: version 0.2
+diff --git a/modules/audio/audio_hw.c b/modules/audio/audio_hw.c
+index a1a322f..68b0d3a 100644
+--- a/modules/audio/audio_hw.c
++++ b/modules/audio/audio_hw.c
+@@ -35,10 +35,12 @@ struct stub_audio_device {
+ 
+ struct stub_stream_out {
+     struct audio_stream_out stream;
++    int64_t last_write_time_us;
+ };
+ 
+ struct stub_stream_in {
+     struct audio_stream_in stream;
++    int64_t last_read_time_us;
+ };
+ 
+ static uint32_t out_get_sample_rate(const struct audio_stream *stream)
+@@ -79,7 +81,7 @@ static int out_set_format(struct audio_stream *stream, audio_format_t format)
+ static int out_standby(struct audio_stream *stream)
+ {
+     ALOGV("out_standby");
+-
++    // out->last_write_time_us = 0; unnecessary as a stale write time has same effect
+     return 0;
+ }
+ 
+@@ -118,9 +120,31 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
+                          size_t bytes)
+ {
+     ALOGV("out_write: bytes: %d", bytes);
++
+     /* XXX: fake timing for audio output */
+-    usleep((int64_t)bytes * 1000000 / audio_stream_out_frame_size(stream) /
+-           out_get_sample_rate(&stream->common));
++    struct stub_stream_out *out = (struct stub_stream_out *)stream;
++    struct timespec t = { .tv_sec = 0, .tv_nsec = 0 };
++    clock_gettime(CLOCK_MONOTONIC, &t);
++    const int64_t now = (t.tv_sec * 1000000000LL + t.tv_nsec) / 1000;
++    const int64_t elapsed_time_since_last_write = now - out->last_write_time_us;
++    int64_t sleep_time = bytes * 1000000LL / audio_stream_out_frame_size(stream) /
++               out_get_sample_rate(&stream->common) - elapsed_time_since_last_write;
++    if (sleep_time > 0) {
++        usleep(sleep_time);
++    } else {
++        // we don't sleep when we exit standby (this is typical for a real alsa buffer).
++        sleep_time = 0;
++    }
++    out->last_write_time_us = now + sleep_time;
++    // last_write_time_us is an approximation of when the (simulated) alsa
++    // buffer is believed completely full. The usleep above waits for more space
++    // in the buffer, but by the end of the sleep the buffer is considered
++    // topped-off.
++    //
++    // On the subsequent out_write(), we measure the elapsed time spent in
++    // the mixer. This is subtracted from the sleep estimate based on frames,
++    // thereby accounting for drain in the alsa buffer during mixing.
++    // This is a crude approximation; we don't handle underruns precisely.
+     return bytes;
+ }
+ 
+@@ -189,6 +213,8 @@ static int in_set_format(struct audio_stream *stream, audio_format_t format)
+ 
+ static int in_standby(struct audio_stream *stream)
+ {
++    struct stub_stream_in *in = (struct stub_stream_in *)stream;
++    in->last_read_time_us = 0;
+     return 0;
+ }
+ 
+@@ -217,9 +243,31 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
+                        size_t bytes)
+ {
+     ALOGV("in_read: bytes %d", bytes);
++
+     /* XXX: fake timing for audio input */
+-    usleep((int64_t)bytes * 1000000 / audio_stream_in_frame_size(stream) /
+-           in_get_sample_rate(&stream->common));
++    struct stub_stream_in *in = (struct stub_stream_in *)stream;
++    struct timespec t = { .tv_sec = 0, .tv_nsec = 0 };
++    clock_gettime(CLOCK_MONOTONIC, &t);
++    const int64_t now = (t.tv_sec * 1000000000LL + t.tv_nsec) / 1000;
++
++    // we do a full sleep when exiting standby.
++    const bool standby = in->last_read_time_us == 0;
++    const int64_t elapsed_time_since_last_read = standby ?
++            0 : now - in->last_read_time_us;
++    int64_t sleep_time = bytes * 1000000LL / audio_stream_in_frame_size(stream) /
++            in_get_sample_rate(&stream->common) - elapsed_time_since_last_read;
++    if (sleep_time > 0) {
++        usleep(sleep_time);
++    } else {
++        sleep_time = 0;
++    }
++    in->last_read_time_us = now + sleep_time;
++    // last_read_time_us is an approximation of when the (simulated) alsa
++    // buffer is drained by the read, and is empty.
++    //
++    // On the subsequent in_read(), we measure the elapsed time spent in
++    // the recording thread. This is subtracted from the sleep estimate based on frames,
++    // thereby accounting for fill in the alsa buffer during the interim.
+     memset(buffer, 0, bytes);
+     return bytes;
+ }
+diff --git a/modules/sensors/multihal.cpp b/modules/sensors/multihal.cpp
+index 0edbc2d..f38d90d 100644
+--- a/modules/sensors/multihal.cpp
++++ b/modules/sensors/multihal.cpp
+@@ -155,7 +155,11 @@ void *writerTask(void* ptr) {
+         ALOGV("writerTask before poll() - bufferSize = %d", bufferSize);
+         eventsPolled = device->poll(device, buffer, bufferSize);
+         ALOGV("writerTask poll() got %d events.", eventsPolled);
+-        if (eventsPolled == 0) {
++        if (eventsPolled <= 0) {
++            if (eventsPolled < 0) {
++                ALOGV("writerTask ignored error %d from %s", eventsPolled, device->common.module->name);
++                ALOGE("ERROR: Fix %s so it does not return error from poll()", device->common.module->name);
++            }
+             continue;
+         }
+         pthread_mutex_lock(&queue_mutex);
+@@ -195,6 +199,7 @@ struct sensors_poll_context_t {
+     int poll(sensors_event_t* data, int count);
+     int batch(int handle, int flags, int64_t period_ns, int64_t timeout);
+     int flush(int handle);
++    int inject_sensor_data(struct sensors_poll_device_1 *dev, const sensors_event_t *data);
+     int close();
+ 
+     std::vector<hw_device_t*> sub_hw_devices;
+@@ -263,6 +268,11 @@ static bool halIsCompliant(sensors_poll_context_t *ctx, int handle) {
+     return version != -1 && HAL_VERSION_IS_COMPLIANT(version);
+ }
+ 
++static bool halIsAPILevelCompliant(sensors_poll_context_t *ctx, int handle, int level) {
++    int version = ctx->get_device_version_by_handle(handle);
++    return version != -1 && (version >= level);
++}
++
+ const char *apiNumToStr(int version) {
+     switch(version) {
+     case SENSORS_DEVICE_API_VERSION_1_0:
+@@ -273,6 +283,8 @@ const char *apiNumToStr(int version) {
+         return "SENSORS_DEVICE_API_VERSION_1_2";
+     case SENSORS_DEVICE_API_VERSION_1_3:
+         return "SENSORS_DEVICE_API_VERSION_1_3";
++    case SENSORS_DEVICE_API_VERSION_1_4:
++        return "SENSORS_DEVICE_API_VERSION_1_4";
+     default:
+         return "UNKNOWN";
+     }
+@@ -399,6 +411,25 @@ int sensors_poll_context_t::flush(int handle) {
+     return retval;
+ }
+ 
++int sensors_poll_context_t::inject_sensor_data(struct sensors_poll_device_1 *dev,
++                                               const sensors_event_t *data) {
++    int retval = -EINVAL;
++    ALOGV("inject_sensor_data");
++    // Get handle for the sensor owning the event being injected
++    int local_handle = get_local_handle(data->sensor);
++    sensors_poll_device_1_t* v1 = this->get_v1_device_by_handle(data->sensor);
++    if (halIsAPILevelCompliant(this, data->sensor, SENSORS_DEVICE_API_VERSION_1_4) &&
++            local_handle >= 0 && v1) {
++        retval = v1->inject_sensor_data(dev, data);
++    } else {
++        ALOGE("IGNORED inject_sensor_data(type=%d, handle=%d) call to non-API-compliant sensor",
++                data->type, data->sensor);
++    }
++    ALOGV("retval %d", retval);
++    return retval;
++
++}
++
+ int sensors_poll_context_t::close() {
+     ALOGV("close");
+     for (std::vector<hw_device_t*>::iterator it = this->sub_hw_devices.begin();
+@@ -449,6 +480,12 @@ static int device__flush(struct sensors_poll_device_1 *dev, int handle) {
+     return ctx->flush(handle);
+ }
+ 
++static int device__inject_sensor_data(struct sensors_poll_device_1 *dev,
++        const sensors_event_t *data) {
++    sensors_poll_context_t* ctx = (sensors_poll_context_t*) dev;
++    return ctx->inject_sensor_data(dev, data);
++}
++
+ static int open_sensors(const struct hw_module_t* module, const char* name,
+         struct hw_device_t** device);
+ 
+@@ -633,7 +670,7 @@ static int open_sensors(const struct hw_module_t* hw_module, const char* name,
+     sensors_poll_context_t *dev = new sensors_poll_context_t();
+     memset(dev, 0, sizeof(sensors_poll_device_1_t));
+     dev->proxy_device.common.tag = HARDWARE_DEVICE_TAG;
+-    dev->proxy_device.common.version = SENSORS_DEVICE_API_VERSION_1_3;
++    dev->proxy_device.common.version = SENSORS_DEVICE_API_VERSION_1_4;
+     dev->proxy_device.common.module = const_cast<hw_module_t*>(hw_module);
+     dev->proxy_device.common.close = device__close;
+     dev->proxy_device.activate = device__activate;
+@@ -641,6 +678,7 @@ static int open_sensors(const struct hw_module_t* hw_module, const char* name,
+     dev->proxy_device.poll = device__poll;
+     dev->proxy_device.batch = device__batch;
+     dev->proxy_device.flush = device__flush;
++    dev->proxy_device.inject_sensor_data = device__inject_sensor_data;
+ 
+     dev->nextReadIndex = 0;
+ 
+@@ -652,7 +690,7 @@ static int open_sensors(const struct hw_module_t* hw_module, const char* name,
+         int sub_open_result = sensors_module->common.methods->open(*it, name, &sub_hw_device);
+         if (!sub_open_result) {
+             if (!HAL_VERSION_IS_COMPLIANT(sub_hw_device->version)) {
+-                ALOGE("SENSORS_DEVICE_API_VERSION_1_3 is required for all sensor HALs");
++                ALOGE("SENSORS_DEVICE_API_VERSION_1_3 or newer is required for all sensor HALs");
+                 ALOGE("This HAL reports non-compliant API level : %s",
+                         apiNumToStr(sub_hw_device->version));
+                 ALOGE("Sensors belonging to this HAL will get ignored !");
+diff --git a/modules/usbaudio/audio_hal.c b/modules/usbaudio/audio_hal.c
+index fe4a88e..6a3c5da 100644
+--- a/modules/usbaudio/audio_hal.c
++++ b/modules/usbaudio/audio_hal.c
+@@ -25,6 +25,7 @@
+ #include <sys/time.h>
+ 
+ #include <log/log.h>
++#include <cutils/list.h>
+ #include <cutils/str_parms.h>
+ #include <cutils/properties.h>
+ 
+@@ -38,17 +39,6 @@
+ 
+ #include <audio_utils/channels.h>
+ 
+-/* FOR TESTING:
+- * Set k_force_channels to force the number of channels to present to AudioFlinger.
+- *   0 disables (this is default: present the device channels to AudioFlinger).
+- *   2 forces to legacy stereo mode.
+- *
+- * Others values can be tried (up to 8).
+- * TODO: AudioFlinger cannot support more than 8 active output channels
+- * at this time, so limiting logic needs to be put here or communicated from above.
+- */
+-static const unsigned k_force_channels = 0;
+-
+ #include "alsa_device_profile.h"
+ #include "alsa_device_proxy.h"
+ #include "alsa_logging.h"
+@@ -65,9 +55,11 @@ struct audio_device {
+ 
+     /* output */
+     alsa_device_profile out_profile;
++    struct listnode output_stream_list;
+ 
+     /* input */
+     alsa_device_profile in_profile;
++    struct listnode input_stream_list;
+ 
+     /* lock input & output sample rates */
+     /*FIXME - How do we address multiple output streams? */
+@@ -78,14 +70,19 @@ struct audio_device {
+     bool standby;
+ };
+ 
++struct stream_lock {
++    pthread_mutex_t lock;               /* see note below on mutex acquisition order */
++    pthread_mutex_t pre_lock;           /* acquire before lock to avoid DOS by playback thread */
++};
++
+ struct stream_out {
+     struct audio_stream_out stream;
+ 
+-    pthread_mutex_t lock;               /* see note below on mutex acquisition order */
+-    pthread_mutex_t pre_lock;           /* acquire before lock to avoid DOS by playback thread */
++    struct stream_lock  lock;
++
+     bool standby;
+ 
+-    struct audio_device *dev;           /* hardware information - only using this for the lock */
++    struct audio_device *adev;           /* hardware information - only using this for the lock */
+ 
+     alsa_device_profile * profile;      /* Points to the alsa_device_profile in the audio_device */
+     alsa_device_proxy proxy;            /* state of the stream */
+@@ -95,7 +92,13 @@ struct stream_out {
+                                          * the device is not compatible with AudioFlinger
+                                          * capabilities, e.g. exposes too many channels or
+                                          * too few channels. */
+-    audio_channel_mask_t hal_channel_mask;   /* channel mask exposed to AudioFlinger. */
++    audio_channel_mask_t hal_channel_mask;  /* USB devices deal in channel counts, not masks
++                                             * so the proxy doesn't have a channel_mask, but
++                                             * audio HALs need to talk about channel masks
++                                             * so expose the one calculated by
++                                             * adev_open_output_stream */
++
++    struct listnode list_node;
+ 
+     void * conversion_buffer;           /* any conversions are put into here
+                                          * they could come from here too if
+@@ -106,11 +109,11 @@ struct stream_out {
+ struct stream_in {
+     struct audio_stream_in stream;
+ 
+-    pthread_mutex_t lock;               /* see note below on mutex acquisition order */
+-    pthread_mutex_t pre_lock;           /* acquire before lock to avoid DOS by capture thread */
++    struct stream_lock  lock;
++
+     bool standby;
+ 
+-    struct audio_device *dev;           /* hardware information - only using this for the lock */
++    struct audio_device *adev;           /* hardware information - only using this for the lock */
+ 
+     alsa_device_profile * profile;      /* Points to the alsa_device_profile in the audio_device */
+     alsa_device_proxy proxy;            /* state of the stream */
+@@ -120,7 +123,13 @@ struct stream_in {
+                                          * the device is not compatible with AudioFlinger
+                                          * capabilities, e.g. exposes too many channels or
+                                          * too few channels. */
+-    audio_channel_mask_t hal_channel_mask;   /* channel mask exposed to AudioFlinger. */
++    audio_channel_mask_t hal_channel_mask;  /* USB devices deal in channel counts, not masks
++                                             * so the proxy doesn't have a channel_mask, but
++                                             * audio HALs need to talk about channel masks
++                                             * so expose the one calculated by
++                                             * adev_open_input_stream */
++
++    struct listnode list_node;
+ 
+     /* We may need to read more data from the device in order to data reduce to 16bit, 4chan */
+     void * conversion_buffer;           /* any conversions are put into here
+@@ -130,12 +139,63 @@ struct stream_in {
+ };
+ 
+ /*
++ * Locking Helpers
++ */
++/*
+  * NOTE: when multiple mutexes have to be acquired, always take the
+  * stream_in or stream_out mutex first, followed by the audio_device mutex.
+  * stream pre_lock is always acquired before stream lock to prevent starvation of control thread by
+  * higher priority playback or capture thread.
+  */
+ 
++static void stream_lock_init(struct stream_lock *lock) {
++    pthread_mutex_init(&lock->lock, (const pthread_mutexattr_t *) NULL);
++    pthread_mutex_init(&lock->pre_lock, (const pthread_mutexattr_t *) NULL);
++}
++
++static void stream_lock(struct stream_lock *lock) {
++    pthread_mutex_lock(&lock->pre_lock);
++    pthread_mutex_lock(&lock->lock);
++    pthread_mutex_unlock(&lock->pre_lock);
++}
++
++static void stream_unlock(struct stream_lock *lock) {
++    pthread_mutex_unlock(&lock->lock);
++}
++
++static void device_lock(struct audio_device *adev) {
++    pthread_mutex_lock(&adev->lock);
++}
++
++static int device_try_lock(struct audio_device *adev) {
++    return pthread_mutex_trylock(&adev->lock);
++}
++
++static void device_unlock(struct audio_device *adev) {
++    pthread_mutex_unlock(&adev->lock);
++}
++
++/*
++ * streams list management
++ */
++static void adev_add_stream_to_list(
++    struct audio_device* adev, struct listnode* list, struct listnode* stream_node) {
++    device_lock(adev);
++
++    list_add_tail(list, stream_node);
++
++    device_unlock(adev);
++}
++
++static void adev_remove_stream_from_list(
++    struct audio_device* adev, struct listnode* stream_node) {
++    device_lock(adev);
++
++    list_remove(stream_node);
++
++    device_unlock(adev);
++}
++
+ /*
+  * Extract the card and device numbers from the supplied key/value pairs.
+  *   kvpairs    A null-terminated string containing the key/value pairs or card and device.
+@@ -214,20 +274,6 @@ static char * device_get_parameters(alsa_device_profile * profile, const char *
+     return result_str;
+ }
+ 
+-void lock_input_stream(struct stream_in *in)
+-{
+-    pthread_mutex_lock(&in->pre_lock);
+-    pthread_mutex_lock(&in->lock);
+-    pthread_mutex_unlock(&in->pre_lock);
+-}
+-
+-void lock_output_stream(struct stream_out *out)
+-{
+-    pthread_mutex_lock(&out->pre_lock);
+-    pthread_mutex_lock(&out->lock);
+-    pthread_mutex_unlock(&out->pre_lock);
+-}
+-
+ /*
+  * HAl Functions
+  */
+@@ -285,20 +331,28 @@ static int out_standby(struct audio_stream *stream)
+ {
+     struct stream_out *out = (struct stream_out *)stream;
+ 
+-    lock_output_stream(out);
++    stream_lock(&out->lock);
+     if (!out->standby) {
+-        pthread_mutex_lock(&out->dev->lock);
++        device_lock(out->adev);
+         proxy_close(&out->proxy);
+-        pthread_mutex_unlock(&out->dev->lock);
++        device_unlock(out->adev);
+         out->standby = true;
+     }
+-    pthread_mutex_unlock(&out->lock);
+-
++    stream_unlock(&out->lock);
+     return 0;
+ }
+ 
+-static int out_dump(const struct audio_stream *stream, int fd)
+-{
++static int out_dump(const struct audio_stream *stream, int fd) {
++    const struct stream_out* out_stream = (const struct stream_out*) stream;
++
++    if (out_stream != NULL) {
++        dprintf(fd, "Output Profile:\n");
++        profile_dump(out_stream->profile, fd);
++
++        dprintf(fd, "Output Proxy:\n");
++        proxy_dump(&out_stream->proxy, fd);
++    }
++
+     return 0;
+ }
+ 
+@@ -318,9 +372,9 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
+         return ret_value;
+     }
+ 
+-    lock_output_stream(out);
++    stream_lock(&out->lock);
+     /* Lock the device because that is where the profile lives */
+-    pthread_mutex_lock(&out->dev->lock);
++    device_lock(out->adev);
+ 
+     if (!profile_is_cached_for(out->profile, card, device)) {
+         /* cannot read pcm device info if playback is active */
+@@ -339,8 +393,8 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
+         }
+     }
+ 
+-    pthread_mutex_unlock(&out->dev->lock);
+-    pthread_mutex_unlock(&out->lock);
++    device_unlock(out->adev);
++    stream_unlock(&out->lock);
+ 
+     return ret_value;
+ }
+@@ -348,14 +402,13 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
+ static char * out_get_parameters(const struct audio_stream *stream, const char *keys)
+ {
+     struct stream_out *out = (struct stream_out *)stream;
+-    lock_output_stream(out);
+-    pthread_mutex_lock(&out->dev->lock);
++    stream_lock(&out->lock);
++    device_lock(out->adev);
+ 
+     char * params_str =  device_get_parameters(out->profile, keys);
+ 
+-    pthread_mutex_unlock(&out->lock);
+-    pthread_mutex_unlock(&out->dev->lock);
+-
++    device_unlock(out->adev);
++    stream_unlock(&out->lock);
+     return params_str;
+ }
+ 
+@@ -383,11 +436,11 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer, si
+     int ret;
+     struct stream_out *out = (struct stream_out *)stream;
+ 
+-    lock_output_stream(out);
++    stream_lock(&out->lock);
+     if (out->standby) {
+-        pthread_mutex_lock(&out->dev->lock);
++        device_lock(out->adev);
+         ret = start_output_stream(out);
+-        pthread_mutex_unlock(&out->dev->lock);
++        device_unlock(out->adev);
+         if (ret != 0) {
+             goto err;
+         }
+@@ -422,12 +475,12 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer, si
+         proxy_write(&out->proxy, write_buff, num_write_buff_bytes);
+     }
+ 
+-    pthread_mutex_unlock(&out->lock);
++    stream_unlock(&out->lock);
+ 
+     return bytes;
+ 
+ err:
+-    pthread_mutex_unlock(&out->lock);
++    stream_unlock(&out->lock);
+     if (ret != 0) {
+         usleep(bytes * 1000000 / audio_stream_out_frame_size(stream) /
+                out_get_sample_rate(&stream->common));
+@@ -445,12 +498,12 @@ static int out_get_presentation_position(const struct audio_stream_out *stream,
+                                          uint64_t *frames, struct timespec *timestamp)
+ {
+     struct stream_out *out = (struct stream_out *)stream; // discard const qualifier
+-    lock_output_stream(out);
++    stream_lock(&out->lock);
+ 
+     const alsa_device_proxy *proxy = &out->proxy;
+     const int ret = proxy_get_presentation_position(proxy, frames, timestamp);
+ 
+-    pthread_mutex_unlock(&out->lock);
++    stream_unlock(&out->lock);
+     return ret;
+ }
+ 
+@@ -469,24 +522,23 @@ static int out_get_next_write_timestamp(const struct audio_stream_out *stream, i
+     return -EINVAL;
+ }
+ 
+-static int adev_open_output_stream(struct audio_hw_device *dev,
++static int adev_open_output_stream(struct audio_hw_device *hw_dev,
+                                    audio_io_handle_t handle,
+-                                   audio_devices_t devices,
++                                   audio_devices_t devicesSpec __unused,
+                                    audio_output_flags_t flags,
+                                    struct audio_config *config,
+                                    struct audio_stream_out **stream_out,
+                                    const char *address /*__unused*/)
+ {
+-    ALOGV("adev_open_output_stream() handle:0x%X, device:0x%X, flags:0x%X, addr:%s",
+-          handle, devices, flags, address);
+-
+-    struct audio_device *adev = (struct audio_device *)dev;
++    ALOGV("adev_open_output_stream() handle:0x%X, devicesSpec:0x%X, flags:0x%X, addr:%s",
++          handle, devicesSpec, flags, address);
+ 
+     struct stream_out *out;
+ 
+     out = (struct stream_out *)calloc(1, sizeof(struct stream_out));
+-    if (!out)
++    if (out == NULL) {
+         return -ENOMEM;
++    }
+ 
+     /* setup function pointers */
+     out->stream.common.get_sample_rate = out_get_sample_rate;
+@@ -508,12 +560,11 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+     out->stream.get_presentation_position = out_get_presentation_position;
+     out->stream.get_next_write_timestamp = out_get_next_write_timestamp;
+ 
+-    pthread_mutex_init(&out->lock, (const pthread_mutexattr_t *) NULL);
+-    pthread_mutex_init(&out->pre_lock, (const pthread_mutexattr_t *) NULL);
++    stream_lock_init(&out->lock);
+ 
+-    out->dev = adev;
+-    pthread_mutex_lock(&adev->lock);
+-    out->profile = &adev->out_profile;
++    out->adev = (struct audio_device *)hw_dev;
++    device_lock(out->adev);
++    out->profile = &out->adev->out_profile;
+ 
+     // build this to hand to the alsa_device_proxy
+     struct pcm_config proxy_config;
+@@ -536,8 +587,8 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+         ret = -EINVAL;
+     }
+ 
+-    out->dev->device_sample_rate = config->sample_rate;
+-    pthread_mutex_unlock(&adev->lock);
++    out->adev->device_sample_rate = config->sample_rate;
++    device_unlock(out->adev);
+ 
+     /* Format */
+     if (config->format == AUDIO_FORMAT_DEFAULT) {
+@@ -555,33 +606,38 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+     }
+ 
+     /* Channels */
+-    unsigned proposed_channel_count = 0;
+-    if (k_force_channels) {
+-        proposed_channel_count = k_force_channels;
+-    } else if (config->channel_mask == AUDIO_CHANNEL_NONE) {
+-        proposed_channel_count =  profile_get_default_channel_count(out->profile);
++    bool calc_mask = false;
++    if (config->channel_mask == AUDIO_CHANNEL_NONE) {
++        /* query case */
++        out->hal_channel_count = profile_get_default_channel_count(out->profile);
++        calc_mask = true;
++    } else {
++        /* explicit case */
++        out->hal_channel_count = audio_channel_count_from_out_mask(config->channel_mask);
+     }
+ 
+-    if (proposed_channel_count != 0) {
+-        if (proposed_channel_count <= FCC_2) {
+-            // use channel position mask for mono and stereo
+-            config->channel_mask = audio_channel_out_mask_from_count(proposed_channel_count);
+-        } else {
+-            // use channel index mask for multichannel
+-            config->channel_mask =
+-                    audio_channel_mask_for_index_assignment_from_count(proposed_channel_count);
+-        }
+-    } else {
+-        proposed_channel_count = audio_channel_count_from_out_mask(config->channel_mask);
++    /* The Framework is currently limited to no more than this number of channels */
++    if (out->hal_channel_count > FCC_8) {
++        out->hal_channel_count = FCC_8;
++        calc_mask = true;
++    }
++
++    if (calc_mask) {
++        /* need to calculate the mask from channel count either because this is the query case
++         * or the specified mask isn't valid for this device, or is more then the FW can handle */
++        config->channel_mask = out->hal_channel_count <= FCC_2
++            /* position mask for mono and stereo*/
++            ? audio_channel_out_mask_from_count(out->hal_channel_count)
++            /* otherwise indexed */
++            : audio_channel_mask_for_index_assignment_from_count(out->hal_channel_count);
+     }
+-    out->hal_channel_count = proposed_channel_count;
+ 
+-    /* we can expose any channel mask, and emulate internally based on channel count. */
+     out->hal_channel_mask = config->channel_mask;
+ 
+-    /* no validity checks are needed as proxy_prepare() forces channel_count to be valid.
+-     * and we emulate any channel count discrepancies in out_write(). */
+-    proxy_config.channels = out->hal_channel_count;
++    // Validate the "logical" channel count against support in the "actual" profile.
++    // if they differ, choose the "actual" number of channels *closest* to the "logical".
++    // and store THAT in proxy_config.channels
++    proxy_config.channels = profile_get_closest_channel_count(out->profile, out->hal_channel_count);
+     proxy_prepare(&out->proxy, out->profile, &proxy_config);
+ 
+     /* TODO The retry mechanism isn't implemented in AudioPolicyManager/AudioFlinger. */
+@@ -592,6 +648,9 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+ 
+     out->standby = true;
+ 
++    /* Save the stream for adev_dump() */
++    adev_add_stream_to_list(out->adev, &out->adev->output_stream_list, &out->list_node);
++
+     *stream_out = &out->stream;
+ 
+     return ret;
+@@ -602,12 +661,14 @@ err_open:
+     return -ENOSYS;
+ }
+ 
+-static void adev_close_output_stream(struct audio_hw_device *dev,
++static void adev_close_output_stream(struct audio_hw_device *hw_dev,
+                                      struct audio_stream_out *stream)
+ {
+     struct stream_out *out = (struct stream_out *)stream;
+     ALOGV("adev_close_output_stream(c:%d d:%d)", out->profile->card, out->profile->device);
+ 
++    adev_remove_stream_from_list(out->adev, &out->list_node);
++
+     /* Close the pcm device */
+     out_standby(&stream->common);
+ 
+@@ -616,14 +677,14 @@ static void adev_close_output_stream(struct audio_hw_device *dev,
+     out->conversion_buffer = NULL;
+     out->conversion_buffer_size = 0;
+ 
+-    pthread_mutex_lock(&out->dev->lock);
+-    out->dev->device_sample_rate = 0;
+-    pthread_mutex_unlock(&out->dev->lock);
++    device_lock(out->adev);
++    out->adev->device_sample_rate = 0;
++    device_unlock(out->adev);
+ 
+     free(stream);
+ }
+ 
+-static size_t adev_get_input_buffer_size(const struct audio_hw_device *dev,
++static size_t adev_get_input_buffer_size(const struct audio_hw_device *hw_dev,
+                                          const struct audio_config *config)
+ {
+     /* TODO This needs to be calculated based on format/channels/rate */
+@@ -676,22 +737,31 @@ static int in_standby(struct audio_stream *stream)
+ {
+     struct stream_in *in = (struct stream_in *)stream;
+ 
+-    lock_input_stream(in);
++    stream_lock(&in->lock);
+     if (!in->standby) {
+-        pthread_mutex_lock(&in->dev->lock);
++        device_lock(in->adev);
+         proxy_close(&in->proxy);
+-        pthread_mutex_unlock(&in->dev->lock);
++        device_unlock(in->adev);
+         in->standby = true;
+     }
+ 
+-    pthread_mutex_unlock(&in->lock);
++    stream_unlock(&in->lock);
+ 
+     return 0;
+ }
+ 
+ static int in_dump(const struct audio_stream *stream, int fd)
+ {
+-    return 0;
++  const struct stream_in* in_stream = (const struct stream_in*)stream;
++  if (in_stream != NULL) {
++      dprintf(fd, "Input Profile:\n");
++      profile_dump(in_stream->profile, fd);
++
++      dprintf(fd, "Input Proxy:\n");
++      proxy_dump(&in_stream->proxy, fd);
++  }
++
++  return 0;
+ }
+ 
+ static int in_set_parameters(struct audio_stream *stream, const char *kvpairs)
+@@ -712,8 +782,8 @@ static int in_set_parameters(struct audio_stream *stream, const char *kvpairs)
+         return ret_value;
+     }
+ 
+-    lock_input_stream(in);
+-    pthread_mutex_lock(&in->dev->lock);
++    stream_lock(&in->lock);
++    device_lock(in->adev);
+ 
+     if (card >= 0 && device >= 0 && !profile_is_cached_for(in->profile, card, device)) {
+         /* cannot read pcm device info if playback is active */
+@@ -732,8 +802,8 @@ static int in_set_parameters(struct audio_stream *stream, const char *kvpairs)
+         }
+     }
+ 
+-    pthread_mutex_unlock(&in->dev->lock);
+-    pthread_mutex_unlock(&in->lock);
++    device_unlock(in->adev);
++    stream_unlock(&in->lock);
+ 
+     return ret_value;
+ }
+@@ -742,13 +812,13 @@ static char * in_get_parameters(const struct audio_stream *stream, const char *k
+ {
+     struct stream_in *in = (struct stream_in *)stream;
+ 
+-    lock_input_stream(in);
+-    pthread_mutex_lock(&in->dev->lock);
++    stream_lock(&in->lock);
++    device_lock(in->adev);
+ 
+     char * params_str =  device_get_parameters(in->profile, keys);
+ 
+-    pthread_mutex_unlock(&in->dev->lock);
+-    pthread_mutex_unlock(&in->lock);
++    device_unlock(in->adev);
++    stream_unlock(&in->lock);
+ 
+     return params_str;
+ }
+@@ -786,11 +856,11 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer, size_t byte
+ 
+     struct stream_in * in = (struct stream_in *)stream;
+ 
+-    lock_input_stream(in);
++    stream_lock(&in->lock);
+     if (in->standby) {
+-        pthread_mutex_lock(&in->dev->lock);
++        device_lock(in->adev);
+         ret = start_input_stream(in);
+-        pthread_mutex_unlock(&in->dev->lock);
++        device_unlock(in->adev);
+         if (ret != 0) {
+             goto err;
+         }
+@@ -840,16 +910,15 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer, size_t byte
+             }
+         }
+ 
+-        /* no need to acquire in->dev->lock to read mic_muted here as we don't change its state */
+-        if (num_read_buff_bytes > 0 && in->dev->mic_muted)
++        /* no need to acquire in->adev->lock to read mic_muted here as we don't change its state */
++        if (num_read_buff_bytes > 0 && in->adev->mic_muted)
+             memset(buffer, 0, num_read_buff_bytes);
+     } else {
+         num_read_buff_bytes = 0; // reset the value after USB headset is unplugged
+     }
+ 
+ err:
+-    pthread_mutex_unlock(&in->lock);
+-
++    stream_unlock(&in->lock);
+     return num_read_buff_bytes;
+ }
+ 
+@@ -858,9 +927,9 @@ static uint32_t in_get_input_frames_lost(struct audio_stream_in *stream)
+     return 0;
+ }
+ 
+-static int adev_open_input_stream(struct audio_hw_device *dev,
++static int adev_open_input_stream(struct audio_hw_device *hw_dev,
+                                   audio_io_handle_t handle,
+-                                  audio_devices_t devices,
++                                  audio_devices_t devicesSpec __unused,
+                                   struct audio_config *config,
+                                   struct audio_stream_in **stream_in,
+                                   audio_input_flags_t flags __unused,
+@@ -873,8 +942,9 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
+     struct stream_in *in = (struct stream_in *)calloc(1, sizeof(struct stream_in));
+     int ret = 0;
+ 
+-    if (in == NULL)
++    if (in == NULL) {
+         return -ENOMEM;
++    }
+ 
+     /* setup function pointers */
+     in->stream.common.get_sample_rate = in_get_sample_rate;
+@@ -894,13 +964,12 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
+     in->stream.read = in_read;
+     in->stream.get_input_frames_lost = in_get_input_frames_lost;
+ 
+-    pthread_mutex_init(&in->lock, (const pthread_mutexattr_t *) NULL);
+-    pthread_mutex_init(&in->pre_lock, (const pthread_mutexattr_t *) NULL);
++    stream_lock_init(&in->lock);
+ 
+-    in->dev = (struct audio_device *)dev;
+-    pthread_mutex_lock(&in->dev->lock);
++    in->adev = (struct audio_device *)hw_dev;
++    device_lock(in->adev);
+ 
+-    in->profile = &in->dev->in_profile;
++    in->profile = &in->adev->in_profile;
+ 
+     struct pcm_config proxy_config;
+     memset(&proxy_config, 0, sizeof(proxy_config));
+@@ -915,17 +984,17 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
+         config->sample_rate = profile_get_default_sample_rate(in->profile);
+     }
+ 
+-    if (in->dev->device_sample_rate != 0 &&                 /* we are playing, so lock the rate */
+-        in->dev->device_sample_rate >= RATELOCK_THRESHOLD) {/* but only for high sample rates */
+-        ret = config->sample_rate != in->dev->device_sample_rate ? -EINVAL : 0;
+-        proxy_config.rate = config->sample_rate = in->dev->device_sample_rate;
++    if (in->adev->device_sample_rate != 0 &&                 /* we are playing, so lock the rate */
++        in->adev->device_sample_rate >= RATELOCK_THRESHOLD) {/* but only for high sample rates */
++        ret = config->sample_rate != in->adev->device_sample_rate ? -EINVAL : 0;
++        proxy_config.rate = config->sample_rate = in->adev->device_sample_rate;
+     } else if (profile_is_sample_rate_valid(in->profile, config->sample_rate)) {
+-        in->dev->device_sample_rate = proxy_config.rate = config->sample_rate;
++        in->adev->device_sample_rate = proxy_config.rate = config->sample_rate;
+     } else {
+         proxy_config.rate = config->sample_rate = profile_get_default_sample_rate(in->profile);
+         ret = -EINVAL;
+     }
+-    pthread_mutex_unlock(&in->dev->lock);
++    device_unlock(in->adev);
+ 
+     /* Format */
+     if (config->format == AUDIO_FORMAT_DEFAULT) {
+@@ -943,40 +1012,75 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
+     }
+ 
+     /* Channels */
+-    unsigned proposed_channel_count = 0;
+-    if (k_force_channels) {
+-        proposed_channel_count = k_force_channels;
+-    } else if (config->channel_mask == AUDIO_CHANNEL_NONE) {
+-        proposed_channel_count = profile_get_default_channel_count(in->profile);
+-    }
+-    if (proposed_channel_count != 0) {
+-        config->channel_mask = audio_channel_in_mask_from_count(proposed_channel_count);
+-        if (config->channel_mask == AUDIO_CHANNEL_INVALID)
+-            config->channel_mask =
+-                    audio_channel_mask_for_index_assignment_from_count(proposed_channel_count);
+-        in->hal_channel_count = proposed_channel_count;
++    bool calc_mask = false;
++    if (config->channel_mask == AUDIO_CHANNEL_NONE) {
++        /* query case */
++        in->hal_channel_count = profile_get_default_channel_count(in->profile);
++        calc_mask = true;
+     } else {
++        /* explicit case */
+         in->hal_channel_count = audio_channel_count_from_in_mask(config->channel_mask);
+     }
+-    /* we can expose any channel mask, and emulate internally based on channel count. */
+-    in->hal_channel_mask = config->channel_mask;
+ 
+-    proxy_config.channels = profile_get_default_channel_count(in->profile);
+-    proxy_prepare(&in->proxy, in->profile, &proxy_config);
++    /* The Framework is currently limited to no more than this number of channels */
++    if (in->hal_channel_count > FCC_8) {
++        in->hal_channel_count = FCC_8;
++        calc_mask = true;
++    }
+ 
+-    in->standby = true;
++    if (calc_mask) {
++        /* need to calculate the mask from channel count either because this is the query case
++         * or the specified mask isn't valid for this device, or is more then the FW can handle */
++        in->hal_channel_mask = in->hal_channel_count <= FCC_2
++            /* position mask for mono & stereo */
++            ? audio_channel_in_mask_from_count(in->hal_channel_count)
++            /* otherwise indexed */
++            : audio_channel_mask_for_index_assignment_from_count(in->hal_channel_count);
++
++        // if we change the mask...
++        if (in->hal_channel_mask != config->channel_mask &&
++            config->channel_mask != AUDIO_CHANNEL_NONE) {
++            config->channel_mask = in->hal_channel_mask;
++            ret = -EINVAL;
++        }
++    } else {
++        in->hal_channel_mask = config->channel_mask;
++    }
+ 
+-    in->conversion_buffer = NULL;
+-    in->conversion_buffer_size = 0;
++    if (ret == 0) {
++        // Validate the "logical" channel count against support in the "actual" profile.
++        // if they differ, choose the "actual" number of channels *closest* to the "logical".
++        // and store THAT in proxy_config.channels
++        proxy_config.channels =
++                profile_get_closest_channel_count(in->profile, in->hal_channel_count);
++        proxy_prepare(&in->proxy, in->profile, &proxy_config);
+ 
+-    *stream_in = &in->stream;
++        in->standby = true;
++
++        in->conversion_buffer = NULL;
++        in->conversion_buffer_size = 0;
++
++        *stream_in = &in->stream;
++
++        /* Save this for adev_dump() */
++        adev_add_stream_to_list(in->adev, &in->adev->input_stream_list, &in->list_node);
++    } else {
++        // Deallocate this stream on error, because AudioFlinger won't call
++        // adev_close_input_stream() in this case.
++        *stream_in = NULL;
++        free(in);
++    }
+ 
+     return ret;
+ }
+ 
+-static void adev_close_input_stream(struct audio_hw_device *dev, struct audio_stream_in *stream)
++static void adev_close_input_stream(struct audio_hw_device *hw_dev,
++                                    struct audio_stream_in *stream)
+ {
+     struct stream_in *in = (struct stream_in *)stream;
++    ALOGV("adev_close_input_stream(c:%d d:%d)", in->profile->card, in->profile->device);
++
++    adev_remove_stream_from_list(in->adev, &in->list_node);
+ 
+     /* Close the pcm device */
+     in_standby(&stream->common);
+@@ -989,52 +1093,94 @@ static void adev_close_input_stream(struct audio_hw_device *dev, struct audio_st
+ /*
+  * ADEV Functions
+  */
+-static int adev_set_parameters(struct audio_hw_device *dev, const char *kvpairs)
++static int adev_set_parameters(struct audio_hw_device *hw_dev, const char *kvpairs)
+ {
+     return 0;
+ }
+ 
+-static char * adev_get_parameters(const struct audio_hw_device *dev, const char *keys)
++static char * adev_get_parameters(const struct audio_hw_device *hw_dev, const char *keys)
+ {
+     return strdup("");
+ }
+ 
+-static int adev_init_check(const struct audio_hw_device *dev)
++static int adev_init_check(const struct audio_hw_device *hw_dev)
+ {
+     return 0;
+ }
+ 
+-static int adev_set_voice_volume(struct audio_hw_device *dev, float volume)
++static int adev_set_voice_volume(struct audio_hw_device *hw_dev, float volume)
+ {
+     return -ENOSYS;
+ }
+ 
+-static int adev_set_master_volume(struct audio_hw_device *dev, float volume)
++static int adev_set_master_volume(struct audio_hw_device *hw_dev, float volume)
+ {
+     return -ENOSYS;
+ }
+ 
+-static int adev_set_mode(struct audio_hw_device *dev, audio_mode_t mode)
++static int adev_set_mode(struct audio_hw_device *hw_dev, audio_mode_t mode)
+ {
+     return 0;
+ }
+ 
+-static int adev_set_mic_mute(struct audio_hw_device *dev, bool state)
++static int adev_set_mic_mute(struct audio_hw_device *hw_dev, bool state)
+ {
+-    struct audio_device * adev = (struct audio_device *)dev;
+-    pthread_mutex_lock(&adev->lock);
++    struct audio_device * adev = (struct audio_device *)hw_dev;
++    device_lock(adev);
+     adev->mic_muted = state;
+-    pthread_mutex_unlock(&adev->lock);
++    device_unlock(adev);
+     return -ENOSYS;
+ }
+ 
+-static int adev_get_mic_mute(const struct audio_hw_device *dev, bool *state)
++static int adev_get_mic_mute(const struct audio_hw_device *hw_dev, bool *state)
+ {
+     return -ENOSYS;
+ }
+ 
+-static int adev_dump(const audio_hw_device_t *device, int fd)
++static int adev_dump(const struct audio_hw_device *device, int fd)
+ {
++    dprintf(fd, "\nUSB audio module:\n");
++
++    struct audio_device* adev = (struct audio_device*)device;
++    const int kNumRetries = 3;
++    const int kSleepTimeMS = 500;
++
++    // use device_try_lock() in case we dumpsys during a deadlock
++    int retry = kNumRetries;
++    while (retry > 0 && device_try_lock(adev) != 0) {
++      sleep(kSleepTimeMS);
++      retry--;
++    }
++
++    if (retry > 0) {
++        if (list_empty(&adev->output_stream_list)) {
++            dprintf(fd, "  No output streams.\n");
++        } else {
++            struct listnode* node;
++            list_for_each(node, &adev->output_stream_list) {
++                struct audio_stream* stream =
++                        (struct audio_stream *)node_to_item(node, struct stream_out, list_node);
++                out_dump(stream, fd);
++            }
++        }
++
++        if (list_empty(&adev->input_stream_list)) {
++            dprintf(fd, "\n  No input streams.\n");
++        } else {
++            struct listnode* node;
++            list_for_each(node, &adev->input_stream_list) {
++                struct audio_stream* stream =
++                        (struct audio_stream *)node_to_item(node, struct stream_in, list_node);
++                in_dump(stream, fd);
++            }
++        }
++
++        device_unlock(adev);
++    } else {
++        // Couldn't lock
++        dprintf(fd, "  Could not obtain device lock.\n");
++    }
++
+     return 0;
+ }
+ 
+@@ -1058,6 +1204,9 @@ static int adev_open(const hw_module_t* module, const char* name, hw_device_t**
+     profile_init(&adev->out_profile, PCM_OUT);
+     profile_init(&adev->in_profile, PCM_IN);
+ 
++    list_init(&adev->output_stream_list);
++    list_init(&adev->input_stream_list);
++
+     adev->hw_device.common.tag = HARDWARE_DEVICE_TAG;
+     adev->hw_device.common.version = AUDIO_DEVICE_API_VERSION_2_0;
+     adev->hw_device.common.module = (struct hw_module_t *)module;

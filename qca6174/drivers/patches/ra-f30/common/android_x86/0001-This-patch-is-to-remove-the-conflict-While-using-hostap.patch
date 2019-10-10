@@ -1,0 +1,26 @@
+From 16946417d28e254f9280c2209db687a5ed2a3cb2 Mon Sep 17 00:00:00 2001
+From: Suresh Kumar Gautam <sgkuma@codeaurora.org>
+Date: Fri, 8 Dec 2017 12:25:34 +0530
+Subject: [PATCH] This patch is to remove the conflict While using hostap(git
+ clone hostap instaed of wpa_supplicant_8.
+
+---
+ bcmdhd/wpa_supplicant_8_lib/Android.mk | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/bcmdhd/wpa_supplicant_8_lib/Android.mk b/bcmdhd/wpa_supplicant_8_lib/Android.mk
+index 116a02e..b5e4da7 100644
+--- a/bcmdhd/wpa_supplicant_8_lib/Android.mk
++++ b/bcmdhd/wpa_supplicant_8_lib/Android.mk
+@@ -21,7 +21,7 @@ ifneq ($(BOARD_WPA_SUPPLICANT_DRIVER),)
+   CONFIG_DRIVER_$(BOARD_WPA_SUPPLICANT_DRIVER) := y
+ endif
+ 
+-WPA_SUPPL_DIR = external/wpa_supplicant_8
++WPA_SUPPL_DIR = external/hostap
+ WPA_SRC_FILE :=
+ 
+ include $(WPA_SUPPL_DIR)/wpa_supplicant/android.config
+-- 
+1.9.1
+

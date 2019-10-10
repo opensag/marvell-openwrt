@@ -1,0 +1,14 @@
+diff --git a/packages/apps/Settings/src/com/android/settings/wifi/WifiApDialog.java b/packages/apps/Settings/src/com/android/settings/wifi/WifiApDialog.java
+index 1316a49..111bbcf 100644
+--- a/packages/apps/Settings/src/com/android/settings/wifi/WifiApDialog.java
++++ b/packages/apps/Settings/src/com/android/settings/wifi/WifiApDialog.java
+@@ -135,7 +135,8 @@ public class WifiApDialog extends AlertDialog implements View.OnClickListener,
+ 
+         ArrayAdapter <CharSequence> channelAdapter;
+         String countryCode = mWifiManager.getCountryCode();
+-        if (!mWifiManager.isDualBandSupported() || countryCode == null) {
++//        if (!mWifiManager.isDualBandSupported() || countryCode == null) {
++	  if ( false ) {
+             //If no country code, 5GHz AP is forbidden
+             Log.i(TAG,(!mWifiManager.isDualBandSupported() ? "Device do not support 5GHz " :"") 
+                     + (countryCode == null ? " NO country code" :"") +  " forbid 5GHz");

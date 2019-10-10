@@ -1,0 +1,244 @@
+diff --git a/target/board/generic/sepolicy/bluetooth.te b/target/board/generic/sepolicy/bluetooth.te
+new file mode 100644
+index 0000000..4c19d8b
+--- /dev/null
++++ b/target/board/generic/sepolicy/bluetooth.te
+@@ -0,0 +1,22 @@
++allow bluetooth sysfs:file rw_file_perms;
++allow bluetooth sysfs_usb:file w_file_perms;
++
++# Allow access to /dev/ttyUSB0
++allow bluetooth ttyUSB0_device:chr_file rw_file_perms;
++
++# Connect to start_hci_filter service
++allow bluetooth start_hci_filter:unix_stream_socket connectto;
++
++set_prop(bluetooth, wc_transport_prop)
++
++# read /persist/bdaddr.txt
++allow bluetooth persist_file:dir search;
++allow bluetooth persist_file:file r_file_perms;
++
++#type wcnss_filter, domain;
++#connect to wcnss_filter
++allow bluetooth wcnss_filter:unix_stream_socket connectto;
++
++allow bluetooth bluetooth_prop:property_service set;
++allow bluetooth sysfs:file w_file_perms;
++allow bluetooth proc_sysrq:file w_file_perms;
+\ No newline at end of file
+diff --git a/target/board/generic/sepolicy/device.te b/target/board/generic/sepolicy/device.te
+index d129441..1d9cd7d 100644
+--- a/target/board/generic/sepolicy/device.te
++++ b/target/board/generic/sepolicy/device.te
+@@ -1 +1,4 @@
+ type qemu_device, dev_type, mlstrustedobject;
++
++type ttyUSB0_device, dev_type;
++type wcnss_device, dev_type;
+\ No newline at end of file
+diff --git a/target/board/generic/sepolicy/file_contexts b/target/board/generic/sepolicy/file_contexts
+index e9502d9..3596c5b 100644
+--- a/target/board/generic/sepolicy/file_contexts
++++ b/target/board/generic/sepolicy/file_contexts
+@@ -18,3 +18,7 @@
+ /sys/qemu_trace(/.*)?        u:object_r:sysfs_writable:s0
+ /system/etc/init.goldfish.sh u:object_r:goldfish_setup_exec:s0
+ /system/bin/qemu-props       u:object_r:qemu_props_exec:s0
++#venkatesh
++/dev/ttyUSB0                 u:object_r:ttyUSB0_device:s0
++#/system/bin/wcnss_filter     u:object_r:wcnss_filter_exec:s0
++/system/bin/wcnss_filter     u:object_r:start_hci_filter_exec:s0
+diff --git a/target/board/generic/sepolicy/property.te b/target/board/generic/sepolicy/property.te
+index 22d580a..09d9473 100644
+--- a/target/board/generic/sepolicy/property.te
++++ b/target/board/generic/sepolicy/property.te
+@@ -1,3 +1,4 @@
+ type qemu_prop, property_type;
+ type radio_noril_prop, property_type;
+ type opengles_prop, property_type;
++type wc_transport_prop, property_type;
+\ No newline at end of file
+diff --git a/target/board/generic/sepolicy/property_contexts b/target/board/generic/sepolicy/property_contexts
+index 142b062..fa8cd22 100644
+--- a/target/board/generic/sepolicy/property_contexts
++++ b/target/board/generic/sepolicy/property_contexts
+@@ -3,3 +3,4 @@ ro.emu.                 u:object_r:qemu_prop:s0
+ ro.emulator.            u:object_r:qemu_prop:s0
+ ro.radio.noril          u:object_r:radio_noril_prop:s0
+ ro.opengles.            u:object_r:opengles_prop:s0
++wc_transport.           u:object_r:wc_transport_prop:s0
+diff --git a/target/board/generic/sepolicy/start_hci_filter.te b/target/board/generic/sepolicy/start_hci_filter.te
+new file mode 100644
+index 0000000..49b2eb2
+--- /dev/null
++++ b/target/board/generic/sepolicy/start_hci_filter.te
+@@ -0,0 +1,15 @@
++#Policy for start_hci_filter
++type start_hci_filter, domain, domain_deprecated;
++type start_hci_filter_exec, exec_type, file_type;
++
++init_daemon_domain(start_hci_filter);
++
++allow start_hci_filter self:capability { setuid setgid dac_override };
++
++allow start_hci_filter proc_sysrq:file rw_file_perms;
++
++allow start_hci_filter ttyUSB0_device:chr_file rw_file_perms;
++
++allow start_hci_filter sysfs_msmuart_file:file rw_file_perms;
++
++set_prop(start_hci_filter, wc_transport_prop)
+diff --git a/target/board/generic/sepolicy/wcnss_filter.te b/target/board/generic/sepolicy/wcnss_filter.te
+new file mode 100644
+index 0000000..72f2759
+--- /dev/null
++++ b/target/board/generic/sepolicy/wcnss_filter.te
+@@ -0,0 +1,69 @@
++# Copyright (c) 2016, The Linux Foundation. All rights reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met:
++#     * Redistributions of source code must retain the above copyright
++#       notice, this list of conditions and the following disclaimer.
++#     * Redistributions in binary form must reproduce the above
++#       copyright notice, this list of conditions and the following
++#       disclaimer in the documentation and/or other materials provided
++#       with the distribution.
++#     * Neither the name of The Linux Foundation nor the names of its
++#       contributors may be used to endorse or promote products derived
++#       from this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
++# WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
++# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT
++# ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS
++# BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
++# BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
++# WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
++# OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
++# IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++type wcnss_filter, domain;
++type wcnss_filter_exec, exec_type, file_type;
++
++init_daemon_domain(wcnss_filter)
++net_domain(wcnss_filter)
++
++userdebug_or_eng(`
++#typeattribute wcnss_filter qti_debugfs_domain;
++allow wcnss_filter debugfs:dir r_dir_perms;
++#allow wcnss_filter debugfs:file rw_file_perms;
++allow wcnss_filter proc_sysrq:file { open write };
++')
++#type for uart
++type sysfs_msmuart_file, sysfs_type, fs_type;
++
++allow wcnss_filter sysfs_msmuart_file:file rw_file_perms;
++allow wcnss_filter {
++    serial_device
++}:chr_file rw_file_perms;
++
++
++#wakelock policy
++wakelock_use(wcnss_filter);
++set_prop(wcnss_filter, bluetooth_prop);
++
++#For bluetooth firmware
++#r_dir_file(wcnss_filter, bt_firmware_file)
++
++# Data file accesses.
++allow wcnss_filter bluetooth_data_file:dir create_dir_perms;
++allow wcnss_filter bluetooth_data_file:notdevfile_class_set create_file_perms;
++type persist_bluetooth_file, file_type;
++allow wcnss_filter persist_bluetooth_file:dir r_dir_perms;
++allow wcnss_filter persist_bluetooth_file:file r_file_perms;
++type persist_file, file_type;
++allow wcnss_filter persist_file:dir r_dir_perms;
++allow wcnss_filter sysfs:file r_file_perms;
++
++#diag
++#userdebug_or_eng(`
++#    diag_use(wcnss_filter)
++#')
+diff --git a/target/board/generic/sepolicy/wcnss_service.te b/target/board/generic/sepolicy/wcnss_service.te
+new file mode 100644
+index 0000000..5294689
+--- /dev/null
++++ b/target/board/generic/sepolicy/wcnss_service.te
+@@ -0,0 +1,58 @@
++type wcnss_service, domain, domain_deprecated;
++type wcnss_service_exec, exec_type, file_type;
++
++init_daemon_domain(wcnss_service)
++net_domain(wcnss_service)
++
++unix_socket_connect(wcnss_service, property, init)
++allow wcnss_service wcnss_device:chr_file rw_file_perms;
++#qmux_socket(wcnss_service);
++
++allow wcnss_service wifi_data_file:dir w_dir_perms;
++allow wcnss_service wifi_data_file:file create_file_perms;
++
++allow wcnss_service system_prop:property_service set;
++allow wcnss_service persist_file:dir r_dir_perms;
++#qmux_socket(wcnss_service);
++
++allow wcnss_service self:socket create_socket_perms;
++#allow wcnss_service smem_log_device:chr_file rw_file_perms;
++allow wcnss_service proc_net:file w_file_perms;
++
++# allow wpa_supplicant to send back wifi information to cnd
++#allow wcnss_service cnd:unix_dgram_socket sendto;
++allow wcnss_service self:capability {
++    net_admin
++    net_bind_service
++};
++
++allow wcnss_service self:netlink_socket create_socket_perms;
++allow wcnss_service self:netlink_generic_socket create_socket_perms;
++#allow wcnss_service firmware_file:dir r_dir_perms;
++#allow wcnss_service firmware_file:file r_file_perms;
++allow wcnss_service sysfs:file w_file_perms;
++
++# allow access to netd
++unix_socket_connect(wcnss_service, netd, netd)
++
++# allow access to perfd
++#unix_socket_connect(wcnss_service, mpctl, perfd)
++#unix_socket_send(wcnss_service, mpctl, perfd)
++
++userdebug_or_eng(`
++allow wcnss_service fuse:dir create_dir_perms;
++allow wcnss_service fuse:file create_file_perms;
++allow wcnss_service vfat:dir create_dir_perms;
++allow wcnss_service vfat:file create_file_perms;
++allow wcnss_service persist_file:file { rw_file_perms setattr };
++#allow wcnss_service dynamic_nv_data_file:file r_file_perms;
++#allow wcnss_service dynamic_nv_data_file:dir r_dir_perms;
++
++# This is needed for ptt_socket app to write logs file collected to sdcard
++r_dir_file(wcnss_service, storage_file)
++r_dir_file(wcnss_service, mnt_user_file)
++#diag_use(wcnss_service)
++')
++
++binder_use(wcnss_service)
++#use_per_mgr(wcnss_service)
+diff --git a/target/product/generic_no_telephony.mk b/target/product/generic_no_telephony.mk
+index d8f4588..28b1518 100644
+--- a/target/product/generic_no_telephony.mk
++++ b/target/product/generic_no_telephony.mk
+@@ -48,6 +48,9 @@ PRODUCT_PACKAGES += \
+     audio_policy.default \
+     local_time.default \
+     vibrator.default \
++    hci_qcomm_init \
++    wcnss_filter \
++    libbtnv
+ 
+ PRODUCT_COPY_FILES := \
+         frameworks/av/media/libeffects/data/audio_effects.conf:system/etc/audio_effects.conf
