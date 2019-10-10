@@ -1,6 +1,6 @@
 # Build list
 
-targetList := drivers drivers_firmware
+targetList := drivers
 #targetList += wpa_supplicant hostapd rootfs_build
 
 default: ${targetList}

@@ -58,7 +58,7 @@ KBUILD_OPTIONS += $(KBUILD_EXTRA) # Extra config if any
 
 
 #################################################################################################################################
-all: $(TARGET_ALL) firmware_install
+all: $(TARGET_ALL)
 
 clean: $(TARGET_CLEAN)
 
