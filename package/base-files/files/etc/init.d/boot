@@ -38,6 +38,13 @@ boot() {
 
 	/sbin/kmodloader
 
+	devid=$(cat /sys/devices/platform/soc/d0070000.pcie/pci0000:00/0000:00:00.0/device)
+	venid=$(cat /sys/devices/platform/soc/d0070000.pcie/pci0000:00/0000:00:00.0/vendor)
+	if [ "$devid" = "0x003e" -a "$venid" = "0x168c" ];then
+	    sleep 1
+	    insmod /lib/firmware/qca6174/wlan.ko
+	fi
+
 	[ ! -f /etc/config/wireless ] && {
 		# compat for brcm47xx and mvebu
 		sleep 1

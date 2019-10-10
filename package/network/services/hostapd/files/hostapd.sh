@@ -258,7 +258,14 @@ hostapd_set_bss_options() {
 		append bss_conf "ap_max_inactivity=$max_inactivity" "$N"
 	fi
 
-	append bss_conf "bss_load_update_period=$bss_load_update_period" "$N"
+	devid=$(cat /sys/devices/platform/soc/d0070000.pcie/pci0000:00/0000:00:00.0/device)
+	venid=$(cat /sys/devices/platform/soc/d0070000.pcie/pci0000:00/0000:00:00.0/vendor)
+	if [ "$devid" = "0x003e" -a "$venid" = "0x168c" ];then
+	    echo ignore this conf for qca6174
+	else
+	    append bss_conf "bss_load_update_period=$bss_load_update_period" "$N"
+	fi
+
 	append bss_conf "chan_util_avg_period=$chan_util_avg_period" "$N"
 	append bss_conf "disassoc_low_ack=$disassoc_low_ack" "$N"
 	append bss_conf "preamble=$short_preamble" "$N"
