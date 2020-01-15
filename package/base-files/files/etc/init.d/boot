@@ -38,12 +38,19 @@ boot() {
 
 	/sbin/kmodloader
 
-	devid=$(cat /sys/devices/platform/soc/d0070000.pcie/pci0000:00/0000:00:00.0/device)
-	venid=$(cat /sys/devices/platform/soc/d0070000.pcie/pci0000:00/0000:00:00.0/vendor)
-	if [ "$devid" = "0x003e" -a "$venid" = "0x168c" ];then
+	pcidevid=$(cat /sys/devices/platform/soc/d0070000.pcie/pci0000:00/0000:00:00.0/device)
+	pcivenid=$(cat /sys/devices/platform/soc/d0070000.pcie/pci0000:00/0000:00:00.0/vendor)
+	if [ "$pcidevid" = "0x003e" -a "$pcivenid" = "0x168c" ];then
 	    sleep 1
 	    insmod /lib/firmware/qca6174/wlan.ko
 	fi
+
+        hsdevid=$(cat /sys/bus/usb/devices/1-1.4/idProduct)
+        hsvenid=$(cat /sys/bus/usb/devices/1-1.4/idVendor)
+        if [ "$hsdevid" = "0321" -a "$hsvenid" = "096e" ];then
+            echo 2-1.2:1.0 > /sys//bus/usb/drivers/usb-storage/unbind
+            insmod /lib/modules/4.14.22/HS_32EU.ko
+        fi
 
 	[ ! -f /etc/config/wireless ] && {
 		# compat for brcm47xx and mvebu
